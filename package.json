@@ -1,0 +1,24 @@
+{
+  "name": "trestle",
+  "version": "0.1.0",
+  "description": "Metaharness for knowledge-graph-based automated code migration: extract facts, resolve a typed evidence graph, project boundaries, orchestrate durable agents.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "bin": {
+    "trestle": "./bin/trestle.js"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test 'tests/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}
