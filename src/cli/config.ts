@@ -18,6 +18,7 @@ export interface ResolvedConfig {
   corpusRoots: string[];
   stateDir: string;
   dbPath: string;
+  projectionPath: string;
   profilePath: string;
   lockPath: string;
   pipelinePath: string;
@@ -44,6 +45,7 @@ export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Pr
     corpusRoots: (cfg.corpusRoots ?? [".."]).map(rel),
     stateDir,
     dbPath: join(stateDir, "trestle.db"),
+    projectionPath: join(stateDir, "projection.lbug"),
     profilePath: rel(cfg.profile ?? "./profile.ts"),
     lockPath: rel(cfg.profileLock ?? "./profile.lock.json"),
     pipelinePath: rel(cfg.pipeline ?? "./extract/pipeline.ts"),

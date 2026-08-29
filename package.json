@@ -23,7 +23,16 @@
     "test": "node --test 'tests/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
+  "peerDependencies": {
+    "@ladybugdb/core": ">=0.19.0"
+  },
+  "peerDependenciesMeta": {
+    "@ladybugdb/core": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@ladybugdb/core": "^0.19.1",
     "@types/node": "^24.0.0",
     "typescript": "^5.8.0"
   }

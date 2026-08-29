@@ -13,7 +13,16 @@ trestle extract         # artifacts -> facts (incremental; memo-skips unchanged 
 trestle resolve         # facts -> nodes/edges/evidence/claims (idempotent)
 trestle survey          # the unresolved population, ranked
 trestle status          # revision + live row counts
+trestle project build   # materialize the Cypher projection (LadybugDB)
+trestle project query 'MATCH ...'   # query it
 ```
+
+The projection is derived and disposable — rebuild it after any resolve.
+It requires the optional `@ladybugdb/core` package (`npm install
+@ladybugdb/core` in your project). Node kinds become node tables
+(identity fields + scalar props as columns, `provenance` for stub
+detection), edge kinds become rel tables with `confidence` and
+`evidenceCount` from the live evidence rows.
 
 Facts persist: iterating on resolvers needs only `resolve` + `survey`.
 Re-run `extract` after corpus, pipeline, or profile changes. Everything is

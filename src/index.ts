@@ -34,6 +34,9 @@ export { loadResolvers, runResolvers } from "./resolve/run.ts";
 export { Store } from "./store/store.ts";
 export type { FactRow, NodeRow, EdgeRow, FactInput } from "./store/store.ts";
 
+export { buildProjection, queryProjection } from "./project/ladybug.ts";
+export type { ProjectionResult } from "./project/ladybug.ts";
+
 export { computeSurvey, renderSurvey } from "./survey/survey.ts";
 export type { Survey } from "./survey/survey.ts";
 

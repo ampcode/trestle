@@ -22,6 +22,8 @@ const USAGE = `trestle <command>
   status               store revision + row counts
   skills list          list packaged agent skills
   skills get <name>    print a packaged skill (version-matched to this install)
+  project build        materialize the Cypher projection (LadybugDB, regenerable)
+  project query <q>    run a Cypher query against the projection
 `;
 
 export async function runCli(argv: string[], cwd: string, overrides: TrestleConfig = {}): Promise<void> {
@@ -50,6 +52,11 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
       if (sub === "list") return skillsList();
       if (sub === "get") return skillsGet(argv[2]);
       throw new Error(`usage: trestle skills list|get <name>`);
+    }
+    case "project": {
+      if (sub === "build") return projectBuild(cwd, overrides);
+      if (sub === "query") return projectQuery(cwd, overrides, argv[2]);
+      throw new Error(`usage: trestle project build|query <cypher>`);
     }
     case undefined:
     case "help":
@@ -269,6 +276,28 @@ async function survey(cwd: string, overrides: TrestleConfig): Promise<void> {
   } finally {
     store.close();
   }
+}
+
+async function projectBuild(cwd: string, overrides: TrestleConfig): Promise<void> {
+  const { buildProjection } = await import("../project/ladybug.ts");
+  const { store, cfg } = await openStore(cwd, overrides);
+  try {
+    const r = await buildProjection(store, cfg.projectionPath);
+    console.log(
+      `projection @ ${relative(cwd, r.path)}: ${r.nodeTables} node tables, ${r.relTables} rel tables; ` +
+        `${r.nodes} nodes, ${r.edges} edges`,
+    );
+  } finally {
+    store.close();
+  }
+}
+
+async function projectQuery(cwd: string, overrides: TrestleConfig, cypher: string | undefined): Promise<void> {
+  if (!cypher) throw new Error(`usage: trestle project query '<cypher>'`);
+  const { queryProjection } = await import("../project/ladybug.ts");
+  const cfg = await loadConfig(cwd, overrides);
+  const rows = await queryProjection(cfg.projectionPath, cypher);
+  console.log(JSON.stringify(rows, null, 2));
 }
 
 async function status(cwd: string, overrides: TrestleConfig): Promise<void> {

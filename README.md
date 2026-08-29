@@ -43,6 +43,8 @@ npx trestle profile build    # compile profile.ts -> profile.lock.json
 npx trestle extract          # run extraction pipeline -> facts
 npx trestle resolve          # run resolvers -> nodes/edges/evidence/claims
 npx trestle survey           # what is still unresolved; what to work on next
+npx trestle project build    # materialize the Cypher projection (needs @ladybugdb/core)
+npx trestle project query 'MATCH (a)-[r]->(b) RETURN a, r, b LIMIT 10'
 ```
 
 The loop is: edit `profile.ts` / `extract/pipeline.ts` / `resolvers/*.ts`,
