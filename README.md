@@ -47,6 +47,20 @@ npx trestle project build    # materialize the Cypher projection (needs @ladybug
 npx trestle project query 'MATCH (a)-[r]->(b) RETURN a, r, b LIMIT 10'
 ```
 
+### Installing from a Git clone
+
+To deploy trestle from a clone instead of the npm registry, use a `file:`
+install so npm owns the link and preserves it across future installs:
+
+```sh
+npm install /path/to/trestle-clone   # symlink managed by npm, not pruned
+```
+
+Do not hand-create `node_modules/trestle` with `ln -s` — `npm install`
+prunes symlinks it did not create. Optional deps such as `@ladybugdb/core`
+are still installed in the host repo: trestle resolves them from the
+invoking project even when trestle itself is deployed as a symlink.
+
 The loop is: edit `profile.ts` / `extract/pipeline.ts` / `resolvers/*.ts`,
 re-run `extract` + `resolve` (both incremental and idempotent), read `survey`,
 repeat. `AGENTS.md` in the scaffold teaches this loop to coding agents, and

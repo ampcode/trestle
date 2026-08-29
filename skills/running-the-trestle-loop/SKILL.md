@@ -19,7 +19,10 @@ trestle project query 'MATCH ...'   # query it
 
 The projection is derived and disposable — rebuild it after any resolve.
 It requires the optional `@ladybugdb/core` package (`npm install
-@ladybugdb/core` in your project). Node kinds become node tables
+@ladybugdb/core` in your project). The projection database admits one
+process at a time; a second `project query` waits up to 10s for the
+lock, so run queries sequentially rather than fanning out in parallel.
+Node kinds become node tables
 (identity fields + scalar props as columns, `provenance` for stub
 detection), edge kinds become rel tables with `confidence` and
 `evidenceCount` from the live evidence rows.

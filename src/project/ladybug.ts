@@ -14,6 +14,8 @@
  * with an actionable message.
  */
 import { existsSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 import type { Profile } from "../profile/define.ts";
 import type { PropSchema } from "../profile/schema.ts";
 import type { Store } from "../store/store.ts";
@@ -26,8 +28,19 @@ interface LbugModule {
 }
 
 async function loadLbug(): Promise<LbugModule> {
+  // 1. Resolve relative to trestle itself (normal node_modules install).
   try {
     return (await import("@ladybugdb/core")) as unknown as LbugModule;
+  } catch {
+    // fall through
+  }
+  // 2. Resolve from the invoking project. When trestle is deployed as a
+  // symlink (npm link, file: install, manual ln -s), Node resolves imports
+  // from trestle's realpath, which cannot see the host repo's node_modules.
+  // @ladybugdb/core is CJS, so createRequire from cwd covers that case.
+  try {
+    const requireFromProject = createRequire(join(process.cwd(), "package.json"));
+    return requireFromProject("@ladybugdb/core") as LbugModule;
   } catch {
     throw new Error(
       `the LadybugDB projection requires the optional dependency @ladybugdb/core\n` +
@@ -39,6 +52,38 @@ async function loadLbug(): Promise<LbugModule> {
 /** Cypher/Ladybug identifiers: kinds may contain "-", table names may not. */
 export function tableName(kind: string): string {
   return kind.replaceAll("-", "_");
+}
+
+type LbugConnection = InstanceType<LbugModule["Connection"]>;
+
+function isLockError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes("Could not set lock");
+}
+
+/**
+ * LadybugDB allows a single process per database. Concurrent `project query`
+ * invocations (common when agents fan out) would otherwise fail immediately
+ * with a lock error, so retry with backoff for a bounded window.
+ */
+async function connect(lbug: LbugModule, dbPath: string, timeoutMs = 10_000): Promise<LbugConnection> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const conn = new lbug.Connection(new lbug.Database(dbPath));
+      await conn.query("RETURN 1"); // the file lock is taken lazily; force it now
+      return conn;
+    } catch (err) {
+      if (!isLockError(err)) throw err;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `projection database at ${dbPath} is locked by another process ` +
+            `(LadybugDB allows one process at a time; retried for ${Math.round(timeoutMs / 1000)}s)\n` +
+            `  run project queries sequentially, or wait for the other process to finish`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
 }
 
 function columnType(schema: PropSchema): string | null {
@@ -92,10 +137,10 @@ function edgeColumns(def: Profile["edges"][string]): { name: string; type: strin
 }
 
 export async function buildProjection(store: Store, dbPath: string): Promise<ProjectionResult> {
-  const { Database, Connection } = await loadLbug();
+  const lbug = await loadLbug();
   const profile = store.requireProfile();
   if (existsSync(dbPath)) rmSync(dbPath, { recursive: true, force: true }); // regenerable by design
-  const conn = new Connection(new Database(dbPath));
+  const conn = await connect(lbug, dbPath);
   const result: ProjectionResult = { path: dbPath, nodeTables: 0, relTables: 0, nodes: 0, edges: 0 };
 
   // ---- DDL from the profile ----
@@ -163,11 +208,11 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
 
 /** Open an existing projection and run one Cypher query. */
 export async function queryProjection(dbPath: string, cypher: string): Promise<Record<string, unknown>[]> {
-  const { Database, Connection } = await loadLbug();
+  const lbug = await loadLbug();
   if (!existsSync(dbPath)) {
     throw new Error(`no projection at ${dbPath}; run \`trestle project build\` first`);
   }
-  const conn = new Connection(new Database(dbPath));
+  const conn = await connect(lbug, dbPath);
   const res = await conn.query(cypher);
   return res.getAll();
 }
