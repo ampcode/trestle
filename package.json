@@ -10,6 +10,12 @@
   "bin": {
     "trestle": "./bin/trestle.js"
   },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "examples"
+  ],
   "exports": {
     ".": "./src/index.ts"
   },

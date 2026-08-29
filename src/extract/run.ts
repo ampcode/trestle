@@ -10,7 +10,7 @@ const ROOT_CELL = "__root__";
 
 export interface ExtractResult {
   rev: number;
-  cells: { computed: number; skipped: number; failed: number };
+  cells: { computed: number; skipped: number; failed: number; stale: number };
   facts: { emitted: number; retired: number };
   errors: { cell: string; error: string }[];
 }
@@ -18,14 +18,24 @@ export interface ExtractResult {
 export async function runExtraction(
   store: Store,
   pipelineDef: PipelineModule,
-  opts: { corpusRoots: string[]; stateDir: string },
+  opts: {
+    corpusRoots: string[];
+    stateDir: string;
+    /**
+     * Joins every cell fingerprint. Callers pass a hash of the pipeline
+     * code + profile so editing either recomputes all cells (the CLI hashes
+     * the extract/ directory and the profile lock).
+     */
+    fingerprintSeed?: string;
+  },
 ): Promise<ExtractResult> {
   store.requireProfile();
   const roots = opts.corpusRoots.map((r) => resolve(r));
+  const seed = opts.fingerprintSeed ?? "";
   const rev = store.beginRevision("extract", {});
   const result: ExtractResult = {
     rev,
-    cells: { computed: 0, skipped: 0, failed: 0 },
+    cells: { computed: 0, skipped: 0, failed: 0, stale: 0 },
     facts: { emitted: 0, retired: 0 },
     errors: [],
   };
@@ -57,6 +67,7 @@ export async function runExtraction(
   let cellExtras: string[] | null = null; // non-file fingerprint inputs (run invocations)
   let cellFacts: FactInput[] = [];
   const rootFacts: FactInput[] = [];
+  const seenCells = new Set<string>();
 
   const recordRead = (path: string, abs: string): void => {
     const h = contentHash(abs);
@@ -91,7 +102,9 @@ export async function runExtraction(
     corpus,
     async memo(name, inputs, fn) {
       if (currentCell !== null) throw new Error(`memo("${name}"): memo cells cannot nest`);
-      // Fingerprint = declared inputs + last run's recorded reads, hashed now.
+      seenCells.add(name);
+      // Fingerprint = seed (pipeline code + profile) + declared inputs +
+      // last run's recorded reads, hashed now.
       const prior = store.getMemoCell(name);
       const probe = new Map<string, string>();
       let probeFailed = false;
@@ -103,7 +116,7 @@ export async function runExtraction(
         }
       }
       const fingerprint = sha256(
-        JSON.stringify([name, [...probe.entries()].sort(), prior?.inputs.length ?? -1]),
+        JSON.stringify([seed, name, [...probe.entries()].sort(), prior?.inputs.length ?? -1]),
       );
       if (prior && !probeFailed && prior.fingerprint === fingerprint) {
         result.cells.skipped++;
@@ -125,7 +138,7 @@ export async function runExtraction(
         }
         const actualInputs = [...cellReads.entries()].map(([path, hash]) => ({ path, hash }));
         const actualFingerprint = sha256(
-          JSON.stringify([name, actualInputs.map((i) => [i.path, i.hash]).sort(), actualInputs.length, ...cellExtras]),
+          JSON.stringify([seed, name, actualInputs.map((i) => [i.path, i.hash]).sort(), actualInputs.length, ...cellExtras]),
         );
         store.putMemoCell(name, actualFingerprint, actualInputs, rev);
         result.cells.computed++;
@@ -186,6 +199,19 @@ export async function runExtraction(
   for (const f of rootFacts) {
     store.insertFact(f, ROOT_CELL, rev);
     result.facts.emitted++;
+  }
+
+  // Stale cells: memo cells the pipeline no longer invokes (renamed keys,
+  // deleted files, removed loops). Retire their facts so they don't linger
+  // as live duplicates. Skipped only when cells failed — a crashed cell
+  // never registers as seen, and retiring its facts would be destructive.
+  if (result.cells.failed === 0) {
+    for (const key of store.listMemoCellKeys()) {
+      if (seenCells.has(key)) continue;
+      result.facts.retired += store.retireFactsByCell(key, rev);
+      store.deleteMemoCell(key);
+      result.cells.stale++;
+    }
   }
 
   return result;

@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS runs (
 export class Store {
   readonly db: DatabaseSync;
   profile: Profile | null = null;
+  private activeProfileHash = "";
 
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -207,6 +208,7 @@ export class Store {
 
   activateProfile(profile: Profile, hash: string): void {
     this.profile = profile;
+    this.activeProfileHash = hash;
     const existing = this.db.prepare(`SELECT hash FROM profile_snapshots WHERE hash = ?`).get(hash);
     if (!existing) {
       const rev = this.beginRevision("profile-activation", { hash });
@@ -244,6 +246,11 @@ export class Store {
     return this.profile;
   }
 
+  /** Hash of the active profile ("" before activation). */
+  profileHash(): string {
+    return this.activeProfileHash;
+  }
+
   /** ---------- artifacts + memo cells ---------- */
 
   recordArtifact(path: string, contentHash: string, kind: string, rev: number): void {
@@ -270,6 +277,16 @@ export class Store {
            inputs = excluded.inputs, updated_rev = excluded.updated_rev`,
       )
       .run(key, fingerprint, JSON.stringify(inputs), rev);
+  }
+
+  listMemoCellKeys(): string[] {
+    return (this.db.prepare(`SELECT key FROM memo_cells ORDER BY key`).all() as { key: string }[]).map(
+      (r) => r.key,
+    );
+  }
+
+  deleteMemoCell(key: string): void {
+    this.db.prepare(`DELETE FROM memo_cells WHERE key = ?`).run(key);
   }
 
   /** ---------- facts ---------- */

@@ -107,6 +107,16 @@ This directory is the Trestle harness for this repository: profile
   becomes a claim or an explicit ignore.
 - Facts persist: iterate on resolvers without re-extracting.
 
+## Skills
+
+Before editing each surface, load its skill (version-matched stubs are in
+\`.agents/skills/\`; full content ships in the trestle package):
+
+- profile.ts → authoring-trestle-profiles
+- extract/pipeline.ts → writing-trestle-extractors
+- resolvers/*.ts → writing-trestle-resolvers
+- deciding what to do next → running-the-trestle-loop
+
 ## Project notes
 
 (add project-specific conventions here)

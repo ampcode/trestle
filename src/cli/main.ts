@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildLock, profileFromLock, type Profile, type ProfileLock } from "../profile/define.ts";
@@ -20,9 +20,15 @@ const USAGE = `trestle <command>
   resolve              run resolvers in phase order
   survey               report the resolved/unresolved population
   status               store revision + row counts
+  skills list          list packaged agent skills
+  skills get <name>    print a packaged skill (version-matched to this install)
 `;
 
 export async function runCli(argv: string[], cwd: string, overrides: TrestleConfig = {}): Promise<void> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(USAGE);
+    return;
+  }
   const [command, sub] = argv;
   switch (command) {
     case "init":
@@ -40,6 +46,11 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
       return survey(cwd, overrides);
     case "status":
       return status(cwd, overrides);
+    case "skills": {
+      if (sub === "list") return skillsList();
+      if (sub === "get") return skillsGet(argv[2]);
+      throw new Error(`usage: trestle skills list|get <name>`);
+    }
     case undefined:
     case "help":
     case "--help":
@@ -50,7 +61,60 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
   }
 }
 
+/** ---------- packaged skills ---------- */
+
+const SKILLS_DIR = join(import.meta.dirname, "../../skills");
+
+interface PackagedSkill {
+  name: string;
+  description: string;
+  content: string;
+}
+
+function packagedSkills(): PackagedSkill[] {
+  if (!existsSync(SKILLS_DIR)) return [];
+  return readdirSync(SKILLS_DIR, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(SKILLS_DIR, e.name, "SKILL.md")))
+    .map((e) => {
+      const content = readFileSync(join(SKILLS_DIR, e.name, "SKILL.md"), "utf8");
+      const description = /^description:\s*(.+)$/m.exec(content)?.[1]?.trim() ?? "";
+      return { name: e.name, description, content };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function skillsList(): void {
+  for (const s of packagedSkills()) console.log(`${s.name}\n    ${s.description}`);
+}
+
+function skillsGet(name: string | undefined): void {
+  const skills = packagedSkills();
+  const skill = skills.find((s) => s.name === name);
+  if (!skill) {
+    throw new Error(`unknown skill "${name ?? ""}" (available: ${skills.map((s) => s.name).join(", ")})`);
+  }
+  console.log(skill.content);
+}
+
 /** ---------- init ---------- */
+
+function skillStub(s: PackagedSkill): string {
+  return `---
+name: ${s.name}
+description: ${s.description}
+---
+
+# ${s.name}
+
+Read the full, version-matched instructions from the installed trestle
+package before doing this work: \`node_modules/trestle/skills/${s.name}/SKILL.md\`
+(or run \`npx trestle skills get ${s.name}\`).
+
+## Project addenda
+
+(add project-specific conventions for this topic here)
+`;
+}
 
 function init(cwd: string): void {
   // Scaffold into ./trestle unless cwd already is a trestle dir.
@@ -59,13 +123,19 @@ function init(cwd: string): void {
     ? JSON.parse(readFileSync(join(target, ".scaffold.json"), "utf8"))
     : {};
   const written: string[] = [];
-  for (const [rel, content] of Object.entries(TEMPLATES)) {
+  const scaffoldFile = (rel: string, content: string): void => {
     const path = join(target, rel);
-    if (existsSync(path)) continue; // never overwrite
+    if (existsSync(path)) return; // never overwrite
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content);
     manifest[rel] = sha256(content);
     written.push(rel);
+  };
+  for (const [rel, content] of Object.entries(TEMPLATES)) scaffoldFile(rel, content);
+  // Host-level skill stubs: point at the packaged, version-matched skills
+  // and carry project addenda. Host root is the scaffold dir's parent.
+  for (const s of packagedSkills()) {
+    scaffoldFile(join("..", ".agents", "skills", s.name, "SKILL.md"), skillStub(s));
   }
   mkdirSync(join(target, "units"), { recursive: true });
   writeFileSync(join(target, ".scaffold.json"), JSON.stringify(manifest, null, 2) + "\n");
@@ -120,6 +190,22 @@ function readLock(lockPath: string): ProfileLock | null {
 
 /** ---------- stages ---------- */
 
+/** Content hash of all .ts sources under a directory (recursive, sorted). */
+function hashDirSources(dir: string): string {
+  const entries: [string, string][] = [];
+  const walk = (d: string): void => {
+    if (!existsSync(d)) return;
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && e.name.endsWith(".ts")) entries.push([relative(dir, p), sha256(readFileSync(p))]);
+    }
+  };
+  walk(dir);
+  entries.sort((a, b) => a[0].localeCompare(b[0]));
+  return sha256(JSON.stringify(entries));
+}
+
 async function openStore(cwd: string, overrides: TrestleConfig): Promise<{ store: Store; cfg: Awaited<ReturnType<typeof loadConfig>> }> {
   const cfg = await loadConfig(cwd, overrides);
   const lock = readLock(cfg.lockPath);
@@ -140,10 +226,14 @@ async function extract(cwd: string, overrides: TrestleConfig): Promise<void> {
     const result = await runExtraction(store, mod.default, {
       corpusRoots: cfg.corpusRoots,
       stateDir: cfg.stateDir,
+      // Editing pipeline code (anything under extract/) or the profile
+      // invalidates every cell.
+      fingerprintSeed: hashDirSources(dirname(cfg.pipelinePath)) + store.profileHash(),
     });
     console.log(
-      `extract @ rev ${result.rev}: ${result.cells.computed} cells computed, ${result.cells.skipped} skipped, ${result.cells.failed} failed; ` +
-        `${result.facts.emitted} facts emitted, ${result.facts.retired} retired`,
+      `extract @ rev ${result.rev}: ${result.cells.computed} cells computed, ${result.cells.skipped} skipped, ${result.cells.failed} failed` +
+        (result.cells.stale > 0 ? `, ${result.cells.stale} stale retired` : "") +
+        `; ${result.facts.emitted} facts emitted, ${result.facts.retired} retired`,
     );
     for (const e of result.errors) console.error(`  cell ${e.cell}: ${e.error}`);
     if (result.cells.failed > 0) process.exitCode = 1;
@@ -161,11 +251,12 @@ async function resolveCmd(cwd: string, overrides: TrestleConfig): Promise<void> 
     for (const r of results) {
       const a = r.applied;
       console.log(
-        `resolve ${r.resolver} (phase ${r.phase}) @ rev ${r.rev}: ` +
-          `${a.node} nodes, ${a.edge} edges, ${a.alias} aliases, ${a.claim} claims, ${a.evidence} evidence, ${a.retired} retired` +
+        `resolve ${r.resolver} (phase ${r.phase}) @ rev ${r.rev} — directives applied: ` +
+          `${a.node} node, ${a.edge} edge, ${a.alias} alias, ${a.claim} claim, ${a.evidence} evidence, ${a.retired} retired` +
           (r.ignored > 0 ? `, ${r.ignored} ignored` : ""),
       );
     }
+    console.log(`(directive counts, not live rows — see \`trestle status\`)`);
   } finally {
     store.close();
   }

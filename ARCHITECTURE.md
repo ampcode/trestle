@@ -563,11 +563,14 @@ Four surfaces inside it:
    bundle without its grammar fails with an actionable install message, so
    a COBOL estate never pays for Java's toolchain.
 4. **Packaged context** — version-tracking prose lives *in the package*,
-   not the repo: the SDK reference, resolver-kit teaching material, and
-   canonical worked examples, surfaced via `trestle skills get <topic>
-   --full` and exposed as real skills by Trestle's Amp plugin. This keeps
-   teaching content matched to the installed version instead of drifting in
-   scaffolded copies.
+   not the repo: `skills/` ships four semantics-first agent skills
+   (authoring-trestle-profiles, writing-trestle-extractors,
+   writing-trestle-resolvers, running-the-trestle-loop), surfaced via
+   `trestle skills list|get <name>`. Each leads with the semantic
+   decisions the migration author owns (what entities matter, what
+   question each resolver answers) and compresses engine mechanics into a
+   copyable footer. This keeps teaching content matched to the installed
+   version instead of drifting in scaffolded copies.
 
 **Scaffold** — written into the host repo by `trestle init`, then owned and
 edited by the user. Repo-owned content is exactly what must diverge per
@@ -579,7 +582,8 @@ project:
   the real pipeline; the type-checker catches upgrade breaks.
 - *Thin stubs*: `trestle/AGENTS.md` (the extract→resolve→survey loop,
   pointers to packaged skills, a Project-notes section) and
-  `.agents/skills/trestle-*` stubs that fetch the packaged content and
+  `.agents/skills/<skill-name>/SKILL.md` stubs (one per packaged skill,
+  same names) that point at the version-matched packaged content and
   carry project addenda.
 - *Ownership rule*: `init` never overwrites an existing file (re-running
   fills gaps only); `trestle upgrade` re-renders only never-modified files

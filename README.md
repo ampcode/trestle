@@ -47,7 +47,9 @@ npx trestle survey           # what is still unresolved; what to work on next
 
 The loop is: edit `profile.ts` / `extract/pipeline.ts` / `resolvers/*.ts`,
 re-run `extract` + `resolve` (both incremental and idempotent), read `survey`,
-repeat. `AGENTS.md` in the scaffold teaches this loop to coding agents.
+repeat. `AGENTS.md` in the scaffold teaches this loop to coding agents, and
+`trestle skills list|get <name>` serves the packaged, version-matched agent
+skills (init also writes `.agents/skills/` stubs pointing at them).
 
 Developing trestle itself:
 
