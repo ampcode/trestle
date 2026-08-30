@@ -105,6 +105,23 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "doctor",
+    description:
+      "Mechanical graph-health checks: near-duplicate identities, orphan edges, stale evidence, " +
+      "double transcription, vocabulary drift, identity hygiene, dangling aliases. " +
+      "Errors mean the graph lies; warnings mean it is noisy.",
+    inputSchema: { type: "object", properties: {} },
+    async run(cfg) {
+      const { runDoctor, renderDoctor } = await import("../check/doctor.ts");
+      const store = openStore(cfg);
+      try {
+        return renderDoctor(runDoctor(store));
+      } finally {
+        store.close();
+      }
+    },
+  },
+  {
     name: "status",
     description: "Store revision and live row counts (facts, nodes, edges, evidence, aliases, claims) as JSON.",
     inputSchema: { type: "object", properties: {} },

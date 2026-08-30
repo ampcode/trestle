@@ -43,9 +43,10 @@ npx trestle profile build    # compile profile.ts -> profile.lock.json
 npx trestle extract          # run extraction pipeline -> facts
 npx trestle resolve          # run resolvers -> nodes/edges/evidence/claims
 npx trestle survey           # what is still unresolved; what to work on next
+npx trestle doctor           # mechanical graph-health checks (duplication, staleness, drift)
 npx trestle project build    # materialize the Cypher projection (needs @ladybugdb/core)
 npx trestle project query 'MATCH (a)-[r]->(b) RETURN a, r, b LIMIT 10'
-npx trestle serve         # MCP server (graph_query, survey, status) for other threads
+npx trestle serve         # MCP server (graph_query, survey, status, doctor) for other threads
 ```
 
 `trestle serve` is the factory's query endpoint: run it as a supervised

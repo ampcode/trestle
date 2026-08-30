@@ -20,6 +20,7 @@ const USAGE = `trestle <command>
   resolve              run resolvers in phase order
   survey               report the resolved/unresolved population
   status               store revision + row counts
+  doctor [--strict]    mechanical graph-health checks (duplication, staleness, drift)
   skills list          list packaged agent skills
   skills get <name>    print a packaged skill (version-matched to this install)
   project build        materialize the Cypher projection (LadybugDB, regenerable)
@@ -50,6 +51,8 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
       return survey(cwd, overrides);
     case "status":
       return status(cwd, overrides);
+    case "doctor":
+      return doctor(cwd, overrides, argv.includes("--strict"));
     case "skills": {
       if (sub === "list") return skillsList();
       if (sub === "get") return skillsGet(argv[2]);
@@ -328,6 +331,18 @@ async function serve(cwd: string, overrides: TrestleConfig, args: string[]): Pro
     process.once("SIGTERM", resolve);
   });
   await running.close();
+}
+
+async function doctor(cwd: string, overrides: TrestleConfig, strict: boolean): Promise<void> {
+  const { runDoctor, renderDoctor } = await import("../check/doctor.ts");
+  const { store } = await openStore(cwd, overrides);
+  try {
+    const report = runDoctor(store);
+    console.log(renderDoctor(report));
+    if (strict && report.errors > 0) throw new Error(`doctor --strict: ${report.errors} error check(s) failing`);
+  } finally {
+    store.close();
+  }
 }
 
 async function status(cwd: string, overrides: TrestleConfig): Promise<void> {

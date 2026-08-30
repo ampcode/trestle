@@ -72,7 +72,7 @@ test("initialize negotiates protocol and advertises tools", async () => {
 
   const list = await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" });
   const tools = (list.json as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
-  assert.deepEqual(tools.sort(), ["graph_query", "status", "survey"]);
+  assert.deepEqual(tools.sort(), ["doctor", "graph_query", "status", "survey"]);
 });
 
 test("notifications get 202 and no body", async () => {
