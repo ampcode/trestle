@@ -61,10 +61,18 @@ export async function runExtraction(
     throw new Error(`corpus.read: "${path}" not found under corpus roots [${roots.join(", ")}]`);
   };
 
+  // Cell fingerprint = seed (pipeline code + profile) + recorded file reads.
+  // Nothing else may enter it: the probe must be able to recompute the exact
+  // committed fingerprint without executing the cell, so any input that only
+  // exists during execution (e.g. run() invocations) would make tool-backed
+  // cells miss forever. Tool/arg changes are covered by the seed, which
+  // hashes the pipeline source that constructs them.
+  const cellFingerprint = (name: string, reads: [path: string, hash: string][], priorInputCount: number): string =>
+    sha256(JSON.stringify([seed, name, [...reads].sort(), priorInputCount]));
+
   // ---- state shared across primitives ----
   let currentCell: string | null = null;
   let cellReads: Map<string, string> | null = null; // path -> content hash
-  let cellExtras: string[] | null = null; // non-file fingerprint inputs (run invocations)
   let cellFacts: FactInput[] = [];
   const rootFacts: FactInput[] = [];
   const seenCells = new Set<string>();
@@ -115,9 +123,7 @@ export async function runExtraction(
           probeFailed = true; // an input disappeared; recompute
         }
       }
-      const fingerprint = sha256(
-        JSON.stringify([seed, name, [...probe.entries()].sort(), prior?.inputs.length ?? -1]),
-      );
+      const fingerprint = cellFingerprint(name, [...probe.entries()], prior?.inputs.length ?? -1);
       if (prior && !probeFailed && prior.fingerprint === fingerprint) {
         result.cells.skipped++;
         return { skipped: true };
@@ -125,7 +131,6 @@ export async function runExtraction(
 
       currentCell = name;
       cellReads = new Map();
-      cellExtras = [];
       cellFacts = [];
       for (const p of inputs) recordRead(p, findAbs(p)); // declared inputs always count
       try {
@@ -137,8 +142,13 @@ export async function runExtraction(
           result.facts.emitted++;
         }
         const actualInputs = [...cellReads.entries()].map(([path, hash]) => ({ path, hash }));
-        const actualFingerprint = sha256(
-          JSON.stringify([seed, name, actualInputs.map((i) => [i.path, i.hash]).sort(), actualInputs.length, ...cellExtras]),
+        // Committed with the same function the probe uses; count = actual
+        // input count so the next probe (which passes prior.inputs.length)
+        // reproduces it exactly when nothing changed.
+        const actualFingerprint = cellFingerprint(
+          name,
+          actualInputs.map((i) => [i.path, i.hash]),
+          actualInputs.length,
         );
         store.putMemoCell(name, actualFingerprint, actualInputs, rev);
         result.cells.computed++;
@@ -149,7 +159,6 @@ export async function runExtraction(
       } finally {
         currentCell = null;
         cellReads = null;
-        cellExtras = null;
         cellFacts = [];
       }
       return { skipped: false };
@@ -162,12 +171,10 @@ export async function runExtraction(
           encoding: "utf8",
           maxBuffer: 512 * 1024 * 1024,
         });
-        cellExtras?.push(`run:${tool}:${JSON.stringify(args)}`);
         return { stdout, stderr: "", status: 0 };
       } catch (err) {
         const e = err as { stdout?: string; stderr?: string; status?: number; message: string };
         if (e.status !== undefined && e.status !== null) {
-          cellExtras?.push(`run:${tool}:${JSON.stringify(args)}`);
           return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", status: e.status };
         }
         throw new Error(`run(${tool}): ${e.message}`);

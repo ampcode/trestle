@@ -24,6 +24,8 @@ const USAGE = `trestle <command>
   skills get <name>    print a packaged skill (version-matched to this install)
   project build        materialize the Cypher projection (LadybugDB, regenerable)
   project query <q>    run a Cypher query against the projection
+  serve [--port N]     MCP server over HTTP (graph_query, survey, status);
+                       expose through the orb portal for other threads
 `;
 
 export async function runCli(argv: string[], cwd: string, overrides: TrestleConfig = {}): Promise<void> {
@@ -58,6 +60,8 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
       if (sub === "query") return projectQuery(cwd, overrides, argv[2]);
       throw new Error(`usage: trestle project build|query <cypher>`);
     }
+    case "serve":
+      return serve(cwd, overrides, argv.slice(1));
     case undefined:
     case "help":
     case "--help":
@@ -298,6 +302,32 @@ async function projectQuery(cwd: string, overrides: TrestleConfig, cypher: strin
   const cfg = await loadConfig(cwd, overrides);
   const rows = await queryProjection(cfg.projectionPath, cypher);
   console.log(JSON.stringify(rows, null, 2));
+}
+
+async function serve(cwd: string, overrides: TrestleConfig, args: string[]): Promise<void> {
+  const { startServer } = await import("../server/serve.ts");
+  const cfg = await loadConfig(cwd, overrides);
+  if (!existsSync(cfg.lockPath)) throw new Error(`no profile lock at ${cfg.lockPath}; run \`trestle profile build\` first`);
+  let port = 7331;
+  let host = "127.0.0.1";
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--port") port = Number(args[++i]);
+    else if (args[i] === "--host") host = String(args[++i]);
+  }
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`invalid --port`);
+  const running = await startServer(
+    { dbPath: cfg.dbPath, projectionPath: cfg.projectionPath, lockPath: cfg.lockPath },
+    { port, host },
+  );
+  console.log(`trestle MCP server on http://${host}:${running.port} (POST JSON-RPC; GET /health)`);
+  console.log(`  tools: graph_query, survey, status`);
+  console.log(`  expose it: amp orb portal ${running.port}`);
+  // Run until terminated; the supervisor (amp orb service) owns the lifecycle.
+  await new Promise<void>((resolve) => {
+    process.once("SIGINT", resolve);
+    process.once("SIGTERM", resolve);
+  });
+  await running.close();
 }
 
 async function status(cwd: string, overrides: TrestleConfig): Promise<void> {

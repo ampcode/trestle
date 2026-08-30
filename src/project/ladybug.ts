@@ -139,7 +139,11 @@ function edgeColumns(def: Profile["edges"][string]): { name: string; type: strin
 export async function buildProjection(store: Store, dbPath: string): Promise<ProjectionResult> {
   const lbug = await loadLbug();
   const profile = store.requireProfile();
-  if (existsSync(dbPath)) rmSync(dbPath, { recursive: true, force: true }); // regenerable by design
+  // Regenerable by design — remove the database and its WAL/temp siblings;
+  // a stale .wal from a prior database ID makes the fresh one refuse to open.
+  for (const p of [dbPath, `${dbPath}.wal`, `${dbPath}.shm`]) {
+    if (existsSync(p)) rmSync(p, { recursive: true, force: true });
+  }
   const conn = await connect(lbug, dbPath);
   const result: ProjectionResult = { path: dbPath, nodeTables: 0, relTables: 0, nodes: 0, edges: 0 };
 

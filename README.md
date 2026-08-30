@@ -45,7 +45,14 @@ npx trestle resolve          # run resolvers -> nodes/edges/evidence/claims
 npx trestle survey           # what is still unresolved; what to work on next
 npx trestle project build    # materialize the Cypher projection (needs @ladybugdb/core)
 npx trestle project query 'MATCH (a)-[r]->(b) RETURN a, r, b LIMIT 10'
+npx trestle serve         # MCP server (graph_query, survey, status) for other threads
 ```
+
+`trestle serve` is the factory's query endpoint: run it as a supervised
+service in the project orb (`amp orb service start trestle-mcp --command
+'npx trestle serve' --portal`) and any Amp thread can attach the portal URL
+as a remote MCP server — or POST JSON-RPC directly — to query the knowledge
+graph without entering the orb.
 
 ### Installing from a Git clone
 
