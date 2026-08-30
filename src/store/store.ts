@@ -489,6 +489,28 @@ export class Store {
         const stable = canon(this.nodeStableId(d.kind, d.identity));
         this.upsertNode(d.kind, d.identity, stable, d.props ?? {}, "declared", resolverName, rev);
         applied.node++;
+
+        for (const ev of d.evidence ?? []) {
+          this.db
+            .prepare(
+              `INSERT INTO evidence (entity_type, entity_stable, fact_id, source_path, locator, confidence,
+                 resolver, resolver_version, rule, note, created_rev)
+               VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              stable,
+              ev.factId ?? null,
+              ev.sourcePath ?? null,
+              ev.locator === undefined ? null : JSON.stringify(ev.locator),
+              d.confidence ?? ev.confidence ?? 1,
+              resolverName,
+              resolverVersion,
+              d.rule ?? null,
+              d.note ?? null,
+              rev,
+            );
+          applied.evidence++;
+        }
       }
 
       // 4. Edge directives: auto-vivify endpoints, upsert edge, append evidence.

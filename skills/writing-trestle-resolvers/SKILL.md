@@ -90,8 +90,9 @@ export default resolver({
 });
 ```
 
-- `emit.node(kind, identity, props?, { rule })` — positional: identity
-  object first, then props.
+- `emit.node(kind, identity, props?, { evidence?, rule })` — positional:
+  identity object first, then props. Cite the defining fact as evidence;
+  `trestle doctor` flags declared nodes with none.
 - `emit.edge(kind, { from, to, identity? }, { evidence, confidence?, rule })`
   — evidence is required; node refs are `"Kind:value"` (single-field
   identity) or `{ kind, identity: {...} }`.

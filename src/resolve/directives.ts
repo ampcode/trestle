@@ -16,7 +16,10 @@ export type Directive =
       kind: string;
       identity: Record<string, Scalar>;
       props?: Record<string, unknown>;
+      evidence?: EvidenceInput[];
+      confidence?: number;
       rule?: string;
+      note?: string;
     }
   | {
       op: "edge";

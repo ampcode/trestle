@@ -81,8 +81,16 @@ export interface EdgeOpts {
   props?: Record<string, unknown>;
 }
 
+export interface NodeOpts {
+  /** Facts (or explicit locators) backing this declaration. Optional but strongly encouraged. */
+  evidence?: (FactRow | EvidenceInput)[];
+  confidence?: number;
+  rule?: string;
+  note?: string;
+}
+
 export interface Emitter {
-  node(kind: string, identity: Record<string, Scalar>, props?: Record<string, unknown>, opts?: { rule?: string }): void;
+  node(kind: string, identity: Record<string, Scalar>, props?: Record<string, unknown>, opts?: NodeOpts): void;
   edge(kind: string, endpoints: { from: NodeRef; to: NodeRef; identity?: Record<string, Scalar> }, opts: EdgeOpts): void;
   alias(canonical: NodeRef, alias: NodeRef): void;
   claim(
@@ -106,7 +114,16 @@ export function makeEmitter(): { emit: Emitter; output: CollectedOutput } {
       : (e as EvidenceInput);
   const emit: Emitter = {
     node(kind, identity, props, opts) {
-      output.directives.push({ op: "node", kind, identity, props, rule: opts?.rule });
+      output.directives.push({
+        op: "node",
+        kind,
+        identity,
+        props,
+        evidence: opts?.evidence?.map(toEvidence),
+        confidence: opts?.confidence,
+        rule: opts?.rule,
+        note: opts?.note,
+      });
     },
     edge(kind, endpoints, opts) {
       if (!opts?.evidence || opts.evidence.length === 0) {

@@ -66,7 +66,7 @@ export function mapFacts(slice: Slice, emit: Emitter, table: Record<string, MapR
         if (rule.when && !rule.when(f)) continue;
         if ("node" in rule) {
           const n = rule.node(f);
-          if (n) emit.node(n.kind, n.identity, n.props, { rule: rule.rule });
+          if (n) emit.node(n.kind, n.identity, n.props, { evidence: [f], rule: rule.rule });
         } else {
           const from = rule.from(f);
           const to = rule.to(f);
