@@ -69,7 +69,7 @@ function openStore(cfg: ServeConfig): Store {
   return store;
 }
 
-const TOOLS: ToolDef[] = [
+export const TOOLS: ToolDef[] = [
   {
     name: "graph_query",
     description:
