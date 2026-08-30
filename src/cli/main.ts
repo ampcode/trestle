@@ -151,6 +151,12 @@ function init(cwd: string): void {
   for (const s of packagedSkills()) {
     scaffoldFile(join("..", ".agents", "skills", s.name, "SKILL.md"), skillStub(s));
   }
+  // Host-level Amp plugin: trestle_auth/trestle_query/trestle_call, so any
+  // thread in the host repo can query this (or a remote) graph portal.
+  const packagedPlugin = join(import.meta.dirname, "..", "..", ".amp", "plugins", "trestle.ts");
+  if (existsSync(packagedPlugin)) {
+    scaffoldFile(join("..", ".amp", "plugins", "trestle.ts"), readFileSync(packagedPlugin, "utf8"));
+  }
   mkdirSync(join(target, "units"), { recursive: true });
   writeFileSync(join(target, ".scaffold.json"), JSON.stringify(manifest, null, 2) + "\n");
   if (written.length === 0) {

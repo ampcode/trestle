@@ -43,11 +43,18 @@ test("init scaffolds host-level skill stubs", async () => {
       assert.match(content, /Project addenda/);
       assert.match(content, new RegExp(`node_modules/trestle/skills/${dir}/SKILL.md`));
     }
-    // Re-init never overwrites: mark a stub, re-run, marker survives.
+    // Amp plugin is scaffolded verbatim from the packaged copy.
+    const plugin = join(host, ".amp", "plugins", "trestle.ts");
+    assert.ok(existsSync(plugin), "missing .amp/plugins/trestle.ts");
+    const packaged = readFileSync(join(import.meta.dirname, "..", ".amp", "plugins", "trestle.ts"), "utf8");
+    assert.equal(readFileSync(plugin, "utf8"), packaged);
+    // Re-init never overwrites: mark a stub and the plugin, re-run, markers survive.
     const marker = join(host, ".agents", "skills", readdirSync(SKILLS_DIR)[0]!, "SKILL.md");
     writeFileSync(marker, "EDITED\n");
+    writeFileSync(plugin, "EDITED\n");
     await runCli(["init"], host);
     assert.equal(readFileSync(marker, "utf8"), "EDITED\n");
+    assert.equal(readFileSync(plugin, "utf8"), "EDITED\n");
   } finally {
     rmSync(host, { recursive: true, force: true });
   }
