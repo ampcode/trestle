@@ -87,9 +87,9 @@ async function redeem(loginUrl: URL): Promise<Jar> {
 	return { cookies: [...cookies].map(([k, v]) => `${k}=${v}`), expiresAt }
 }
 
-/** POST one JSON-RPC message. Non-JSON or non-200 means the session is gone. */
+/** POST one JSON-RPC message to the MCP endpoint. Non-JSON or non-200 means the session is gone. */
 async function rpc(portal: URL, jar: Jar, method: string, params?: unknown): Promise<{ ok: boolean; json?: any }> {
-	const res = await fetch(portal, {
+	const res = await fetch(new URL('/mcp', portal), {
 		method: 'POST',
 		redirect: 'manual',
 		headers: { 'content-type': 'application/json', cookie: jar.cookies.join('; ') },

@@ -375,7 +375,7 @@ its public portal URL — the project's single access point.
 │  checkout (trunk)      trestle server (orb service)           │
 │  profile,           ┌────────────────────────────────────┐    │
 │  pipeline,          │  /mcp   MCP (Streamable HTTP)      │    │
-│  resolvers,         │  /ui    graph explorer             │    │
+│  resolvers,         │  /      graph explorer             │    │
 │  corpora/ (pinned   │  /health /ready                    │    │
 │  submodules)        │                                    │    │
 │  store (SQLite:     └────────────────┬───────────────────┘    │

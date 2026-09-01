@@ -1,26 +1,26 @@
 /**
  * `trestle serve`: the project's query endpoint (ARCHITECTURE §5/§7).
  *
- * A minimal MCP server over Streamable HTTP, meant to run as a supervised
+ * A browser graph explorer and MCP server, meant to run as one supervised
  * service inside the project orb and be exposed through the orb portal.
- * Any Amp thread can then attach it as a remote MCP server (or POST
- * JSON-RPC directly) to query the knowledge graph without entering the orb.
  *
- * Protocol: stateless JSON-RPC 2.0 over POST (single messages or batches),
- * JSON responses only — no SSE streams, no sessions. Auth is the portal's
- * job; the server itself binds loopback by default.
+ * HTTP: GET / is the explorer, GET /api/graph is its live SQLite view, and
+ * POST /mcp is stateless JSON-RPC 2.0. Auth is the portal's job; the server
+ * itself binds loopback by default.
  *
  * The store and projection are opened per request: the server never holds
  * the SQLite or LadybugDB locks between requests, so extract/resolve/
  * project-build keep working in the same orb while it runs.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { profileFromLock, type ProfileLock } from "../profile/define.ts";
 import { queryProjection } from "../project/ladybug.ts";
 import { Store } from "../store/store.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
+import type { VisualizationConfig } from "../cli/config.ts";
 
 const PROTOCOL_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18"]);
 const DEFAULT_PROTOCOL = "2025-06-18";
@@ -30,6 +30,32 @@ export interface ServeConfig {
   dbPath: string;
   projectionPath: string;
   lockPath: string;
+  visualization?: VisualizationConfig;
+}
+
+export interface VisualizationGraph {
+  initialized: boolean;
+  revision: number;
+  config: VisualizationConfig;
+  stats: { facts: number; nodes: number; edges: number; claims: number };
+  nodes: Array<{
+    id: string;
+    kind: string;
+    label: string;
+    identity: Record<string, string | number | boolean>;
+    props: Record<string, unknown>;
+    provenance: string;
+  }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    kind: string;
+    identity: Record<string, string | number | boolean>;
+    props: Record<string, unknown>;
+    confidence: number;
+    evidenceCount: number;
+  }>;
 }
 
 interface JsonRpcMessage {
@@ -67,6 +93,80 @@ function openStore(cfg: ServeConfig): Store {
   const store = new Store(cfg.dbPath);
   store.activateProfile(profileFromLock(lock), lock.hash);
   return store;
+}
+
+export function readVisualizationGraph(cfg: ServeConfig): VisualizationGraph {
+  const config = cfg.visualization ?? {};
+  const empty: VisualizationGraph = {
+    initialized: false,
+    revision: 0,
+    config,
+    stats: { facts: 0, nodes: 0, edges: 0, claims: 0 },
+    nodes: [],
+    edges: [],
+  };
+  if (!existsSync(cfg.lockPath)) return empty;
+
+  const store = openStore(cfg);
+  try {
+    const count = (table: string, extra = ""): number =>
+      (
+        store.db
+          .prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE retired_rev IS NULL${extra}`)
+          .get() as { c: number }
+      ).c;
+    const evidence = new Map(
+      (
+        store.db
+          .prepare(
+            `SELECT entity_stable, MAX(confidence) AS confidence, COUNT(*) AS evidence_count
+             FROM evidence WHERE retired_rev IS NULL GROUP BY entity_stable`,
+          )
+          .all() as { entity_stable: string; confidence: number; evidence_count: number }[]
+      ).map((row) => [row.entity_stable, row]),
+    );
+    const nodes = store.liveNodes().map((node) => {
+      const labelField = config.nodes?.[node.kind]?.label;
+      const configuredLabel = labelField ? (node.identity[labelField] ?? node.props[labelField]) : undefined;
+      const identityLabel = Object.values(node.identity).map(String).join(" · ");
+      return {
+        id: node.stableId,
+        kind: node.kind,
+        label: configuredLabel === undefined ? identityLabel || node.stableId.slice(0, 10) : String(configuredLabel),
+        identity: node.identity,
+        props: node.props,
+        provenance: node.provenance,
+      };
+    });
+    const edges = store.liveEdges().map((edge) => {
+      const ev = evidence.get(edge.stableId);
+      return {
+        id: edge.stableId,
+        source: edge.fromStable,
+        target: edge.toStable,
+        kind: edge.kind,
+        identity: edge.identity,
+        props: edge.props,
+        confidence: Number(ev?.confidence ?? 0),
+        evidenceCount: Number(ev?.evidence_count ?? 0),
+      };
+    });
+    return {
+      initialized: true,
+      revision: store.currentRevision(),
+      config,
+      stats: {
+        facts: count("facts"),
+        nodes: nodes.length,
+        edges: edges.length,
+        claims: count("claims", " AND status = 'open'"),
+      },
+      nodes,
+      edges,
+    };
+  } finally {
+    store.close();
+  }
 }
 
 export const TOOLS: ToolDef[] = [
@@ -218,9 +318,28 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
-  res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(text) });
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(text),
+    "cache-control": "no-store",
+  });
   res.end(text);
 }
+
+function sendFile(res: ServerResponse, path: string, contentType: string, cacheControl = "no-cache"): void {
+  const body = readFileSync(path);
+  res.writeHead(200, {
+    "content-type": contentType,
+    "content-length": body.length,
+    "cache-control": cacheControl,
+  });
+  res.end(body);
+}
+
+const PACKAGE_ROOT = join(import.meta.dirname, "..", "..");
+const VIZ_DIR = join(PACKAGE_ROOT, "src", "viz");
+const require = createRequire(import.meta.url);
+const COSMOS_BUNDLE = join(dirname(require.resolve("@cosmos.gl/graph")), "index.min.js");
 
 export interface RunningServer {
   server: Server;
@@ -232,12 +351,33 @@ export function startServer(cfg: ServeConfig, opts: { port: number; host?: strin
   const host = opts.host ?? "127.0.0.1";
   const server = createServer(async (req, res) => {
     try {
-      if (req.method === "GET" && req.url === "/health") {
+      const pathname = new URL(req.url ?? "/", "http://trestle.local").pathname;
+      if (req.method === "GET" && pathname === "/health") {
         sendJson(res, 200, { ok: true });
         return;
       }
-      if (req.method !== "POST") {
-        sendJson(res, 405, { error: "POST JSON-RPC messages to this endpoint" });
+      if (req.method === "GET" && pathname === "/") {
+        sendFile(res, join(VIZ_DIR, "index.html"), "text/html; charset=utf-8");
+        return;
+      }
+      if (req.method === "GET" && pathname === "/assets/app.js") {
+        sendFile(res, join(VIZ_DIR, "app.js"), "text/javascript; charset=utf-8");
+        return;
+      }
+      if (req.method === "GET" && pathname === "/assets/styles.css") {
+        sendFile(res, join(VIZ_DIR, "styles.css"), "text/css; charset=utf-8");
+        return;
+      }
+      if (req.method === "GET" && pathname === "/assets/cosmos.js") {
+        sendFile(res, COSMOS_BUNDLE, "text/javascript; charset=utf-8", "public, max-age=31536000, immutable");
+        return;
+      }
+      if (req.method === "GET" && pathname === "/api/graph") {
+        sendJson(res, 200, readVisualizationGraph(cfg));
+        return;
+      }
+      if (req.method !== "POST" || pathname !== "/mcp") {
+        sendJson(res, 404, { error: "not found" });
         return;
       }
       let parsed: unknown;

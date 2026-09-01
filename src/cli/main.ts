@@ -11,6 +11,7 @@ import { loadResolvers, runResolvers } from "../resolve/run.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import { loadConfig, type TrestleConfig } from "./config.ts";
 
+
 const USAGE = `trestle <command>
 
   corpus add <url>     add an estate as a shallow submodule under corpora/
@@ -25,8 +26,8 @@ const USAGE = `trestle <command>
   skills get <name>    print a packaged skill (version-matched to this install)
   project build        materialize the Cypher projection (LadybugDB, regenerable)
   project query <q>    run a Cypher query against the projection
-  serve [--port N]     MCP server over HTTP (graph_query, survey, status, doctor);
-                       expose through the orb portal for other threads
+  serve [--port N]     graph explorer + MCP server (POST /mcp);
+                       expose through the orb portal
 `;
 
 export async function runCli(argv: string[], cwd: string, overrides: TrestleConfig = {}): Promise<void> {
@@ -278,7 +279,6 @@ async function projectQuery(cwd: string, overrides: TrestleConfig, cypher: strin
 async function serve(cwd: string, overrides: TrestleConfig, args: string[]): Promise<void> {
   const { startServer, TOOLS } = await import("../server/serve.ts");
   const cfg = await loadConfig(cwd, overrides);
-  if (!existsSync(cfg.lockPath)) throw new Error(`no profile lock at ${cfg.lockPath}; run \`trestle profile build\` first`);
   let port = 7331;
   let host = "127.0.0.1";
   for (let i = 0; i < args.length; i++) {
@@ -287,10 +287,10 @@ async function serve(cwd: string, overrides: TrestleConfig, args: string[]): Pro
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`invalid --port`);
   const running = await startServer(
-    { dbPath: cfg.dbPath, projectionPath: cfg.projectionPath, lockPath: cfg.lockPath },
+    { dbPath: cfg.dbPath, projectionPath: cfg.projectionPath, lockPath: cfg.lockPath, visualization: cfg.visualization },
     { port, host },
   );
-  console.log(`trestle MCP server on http://${host}:${running.port} (POST JSON-RPC; GET /health)`);
+  console.log(`trestle graph server on http://${host}:${running.port} (visualization /; MCP POST /mcp)`);
   console.log(`  tools: ${TOOLS.map((t) => t.name).join(", ")}`);
   console.log(`  expose it: amp orb portal ${running.port}`);
   // Run until terminated; the supervisor (amp orb service) owns the lifecycle.

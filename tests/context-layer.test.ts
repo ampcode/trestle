@@ -38,7 +38,9 @@ test("the graph repo ships its user surface committed at the root", () => {
   for (const f of ["trestle.config.ts", "profile.ts", "extract/pipeline.ts", "resolvers/inventory.ts", "AGENTS.md"]) {
     assert.ok(existsSync(join(REPO, f)), `missing user-surface file ${f}`);
   }
-  assert.match(readFileSync(join(REPO, "trestle.config.ts"), "utf8"), /corpusRoots: \["corpora"\]/);
+  const configText = readFileSync(join(REPO, "trestle.config.ts"), "utf8");
+  assert.match(configText, /corpusRoots: \["corpora"\]/);
+  assert.match(configText, /visualization:/);
   // Node package self-reference: user files import "trestle" from source.
   const pkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8"));
   assert.equal(pkg.name, "trestle");
@@ -51,7 +53,7 @@ test("the graph repo ships its user surface committed at the root", () => {
   assert.match(setupText, /git submodule update --init --depth 1/);
   assert.match(setupText, /^npm install$/m);
   // Graph endpoint declared as a supervised orb service.
-  assert.match(readFileSync(join(REPO, ".amp", "services.yaml"), "utf8"), /trestle\.js serve --port "\$PORT"/);
+  assert.match(readFileSync(join(REPO, ".amp", "services.yaml"), "utf8"), /trestle\.js serve --host 0\.0\.0\.0 --port "\$PORT"/);
   assert.ok(existsSync(join(REPO, ".amp", "plugins", "trestle.ts")), "missing .amp/plugins/trestle.ts");
 });
 

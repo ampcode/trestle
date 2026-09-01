@@ -17,7 +17,7 @@ let stateDir: string;
 let running: RunningServer;
 
 const rpc = async (body: unknown): Promise<{ status: number; json: unknown }> => {
-  const res = await fetch(`http://127.0.0.1:${running.port}/`, {
+  const res = await fetch(`http://127.0.0.1:${running.port}/mcp`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -44,6 +44,10 @@ before(async () => {
       dbPath: join(stateDir, "trestle.db"),
       projectionPath: join(stateDir, "projection.lbug"),
       lockPath: join(fixture, "profile.lock.json"),
+      visualization: {
+        title: "Mainframe map",
+        nodes: { Program: { label: "name", color: "#123456" } },
+      },
     },
     { port: 0 },
   );
@@ -56,6 +60,70 @@ after(async () => {
 test("health endpoint", async () => {
   const res = await fetch(`http://127.0.0.1:${running.port}/health`);
   assert.equal(res.status, 200);
+});
+
+test("serves the explorer, bundled renderer, and live graph API", async () => {
+  const root = await fetch(`http://127.0.0.1:${running.port}/`);
+  assert.equal(root.status, 200);
+  assert.match(root.headers.get("content-type") ?? "", /text\/html/);
+  assert.match(await root.text(), /Interactive knowledge graph/);
+
+  const cosmos = await fetch(`http://127.0.0.1:${running.port}/assets/cosmos.js`);
+  assert.equal(cosmos.status, 200);
+  assert.ok((await cosmos.arrayBuffer()).byteLength > 100_000, "serves the local cosmos.gl bundle");
+
+  const response = await fetch(`http://127.0.0.1:${running.port}/api/graph`);
+  assert.equal(response.status, 200);
+  const graph = (await response.json()) as {
+    initialized: boolean;
+    revision: number;
+    config: { title: string; nodes: { Program: { color: string } } };
+    stats: { nodes: number; edges: number };
+    nodes: { kind: string; label: string }[];
+    edges: { confidence: number; evidenceCount: number }[];
+  };
+  assert.equal(graph.initialized, true);
+  assert.equal(graph.config.title, "Mainframe map");
+  assert.equal(graph.config.nodes.Program.color, "#123456");
+  assert.equal(graph.stats.nodes, 6);
+  assert.ok(graph.stats.edges > 0);
+  assert.ok(graph.nodes.some((node) => node.kind === "Program" && node.label === "ACCT01"));
+  assert.ok(graph.edges.every((edge) => edge.confidence > 0 && edge.evidenceCount > 0));
+});
+
+test("MCP is exposed only at /mcp", async () => {
+  const rootPost = await fetch(`http://127.0.0.1:${running.port}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+  });
+  assert.equal(rootPost.status, 404);
+  const ping = await rpc({ jsonrpc: "2.0", id: 1, method: "ping" });
+  assert.equal(ping.status, 200);
+});
+
+test("starts before the profile exists and reports an initialization state", async () => {
+  const emptyDir = mkdtempSync(join(tmpdir(), "trestle-empty-serve-"));
+  const emptyServer = await startServer(
+    {
+      dbPath: join(emptyDir, "trestle.db"),
+      projectionPath: join(emptyDir, "projection.lbug"),
+      lockPath: join(emptyDir, "missing.lock.json"),
+      visualization: { title: "Empty graph" },
+    },
+    { port: 0 },
+  );
+  try {
+    const response = await fetch(`http://127.0.0.1:${emptyServer.port}/api/graph`);
+    assert.equal(response.status, 200);
+    const graph = (await response.json()) as { initialized: boolean; nodes: unknown[]; config: { title: string } };
+    assert.equal(graph.initialized, false);
+    assert.deepEqual(graph.nodes, []);
+    assert.equal(graph.config.title, "Empty graph");
+  } finally {
+    await emptyServer.close();
+    rmSync(emptyDir, { recursive: true, force: true });
+  }
 });
 
 test("initialize negotiates protocol and advertises tools", async () => {
@@ -119,7 +187,7 @@ test("protocol errors: unknown method, unknown tool, parse error, batch", async 
   const badTool = await rpc({ jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "nope" } });
   assert.equal((badTool.json as { error: { code: number } }).error.code, -32602);
 
-  const res = await fetch(`http://127.0.0.1:${running.port}/`, {
+  const res = await fetch(`http://127.0.0.1:${running.port}/mcp`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: "{not json",

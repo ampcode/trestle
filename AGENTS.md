@@ -20,6 +20,11 @@ repo is the application.
   read artifacts. Every edge carries evidence; every unmatched reference
   becomes a claim or an explicit ignore.
 - Facts persist: iterate on resolvers without re-extracting.
+- Visualization styling lives in trestle.config.ts. The Amp portal service
+  (`trestle serve`) renders the graph explorer at / from the live SQLite
+  store — no `trestle project build` needed. After changing presentation
+  config, run `amp orb service restart trestle`; graph data itself updates
+  on browser refresh.
 - corpora/ is read-only source material. Never edit files there; a corpus
   changes only by moving its submodule pin. Add estates with
   `npx trestle corpus add <git-url>` (regular filesystem/search tools work
