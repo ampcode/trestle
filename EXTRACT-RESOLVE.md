@@ -39,8 +39,8 @@ whatever the pipeline does deterministic, incremental, and auditable:
 |---|---|---|
 | `corpus.list()` / `corpus.read(p)` | enumerate / read corpus artifacts | every read is recorded; content hashes feed cache keys |
 | `acquire(name, fetch)` | fetch remote inputs (hosted SCIP index, API harvest) | the **only** primitive allowed network; result frozen as an immutable snapshot artifact with `asOf` |
-| `run(tool, args, inputs)` | invoke an external tool (clang, javac, tree-sitter, scip) | sandboxed, offline; tool fingerprint + input hashes recorded |
-| `memo(name, inputs, fn)` | an incremental cell | body skipped when the input fingerprint is unchanged; facts from a recomputed cell retire their predecessors |
+| `run(tool, args, inputs)` | invoke an external tool (clang, javac, tree-sitter, scip) | sandboxed, offline; covered by the fingerprint seed, which hashes every file under `extract/` (pipeline code and helper tools) plus the profile — an upgraded external binary is invisible, so encode its version in the cell name |
+| `memo(name, inputs, fn)` | an incremental cell | body skipped when the input fingerprint is unchanged; facts from a recomputed cell retire their predecessors. `inputs` must be corpus paths (or `acquire` results) — version/tool identity goes in the cell name, not `inputs` |
 | `emit(facts)` | write facts to the fact store | envelope enforced, schema-validated at the write boundary |
 
 The engine never contains a format, language, or framework name — and after
@@ -337,27 +337,15 @@ a pipeline is a template exercise for a coding agent, not a research
 project. The SDK is convenience, never contract: any executable emitting
 valid envelopes through the write boundary is a full citizen.
 
-**Shipped bundles.** For high-value tools, Trestle ships complete
-ready-to-wire ingestion bundles — ordinary user-space code, zero kernel
-involvement. The flagship is the `trestle/scip` subpath:
-
-- an **acquirer** for hosted indexes (fetch `index.scip`, or fall back to a
-  GraphQL harvest when the raw file is unreachable) and a pinned-toolchain
-  `run` wrapper for regenerating one locally (scip-java, scip-typescript);
-- an **adopting indexer** that walks the protobuf and emits standard fact
-  kinds with `authority` — definitions and references (with import,
-  read/write, generated, and test roles), implementation/type-definition
-  relationships, enclosing-symbol containment, per-document coverage;
-- a **P0 mapping resolver** with default rules plus a `scip-identity`
-  resolver (P2) that turns SCIP symbol strings into alias directives;
-- a **starter profile fragment** mapping SCIP's symbol kinds onto a default
-  node vocabulary, and golden fixtures for the whole path.
-
-`trestle add scip` wires it in; a project then edits the mapping rules —
-which occurrence roles matter, how symbols map onto *their* vocabulary,
-confidence policy — rather than writing the plumbing. Bundles prove the
-architecture: if one ever needs an engine change, the kernel has failed its
-regression test.
+**Foreign indexes are ordinary parser output.** A SCIP index, a ctags file,
+a compiler's symbol dump — these get no special engine support. The pipeline
+acquires or regenerates the artifact (`acquire` a hosted index, or a pinned
+`run` of scip-java/scip-typescript), then a user-space transcriber walks it
+and emits declared facts with `authority` stamping, exactly like any
+first-hand parser. Mapping its symbols onto the project's vocabulary is the
+project's resolver code. The extraction skill's tool index routes agents to
+these indexers when the ecosystem warrants it; if ingesting one ever needs
+an engine change, the kernel has failed its regression test.
 
 ---
 

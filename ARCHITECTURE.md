@@ -66,13 +66,11 @@ pipeline and resolver code. TypeScript is the authoring surface because the
 whole user-space already is: the declared fact/node/edge schemas become
 inferred types in the `trestle` SDK, so `emit("call-observed", …)` with
 a typo'd kind or a missing required prop is a compile error in the editor,
-not a runtime rejection mid-extraction — and bundle composition is an import
-plus a spread instead of a YAML merge algorithm.
+not a runtime rejection mid-extraction.
 
 ```ts
 // profile.ts (illustrative)
 import { defineProfile, t } from "trestle"
-import scip from "trestle/scip/profile"            // bundle fragment: adopt, rename, or reject
 
 export default defineProfile({
   nodes: {
@@ -86,7 +84,6 @@ export default defineProfile({
   facts: {
     "program-defined": { version: 1, props: { name: t.string() } },   // neutral fact vocabulary, versioned
     "call-observed":   { version: 1, props: { callee: t.string(), argLiteral: t.string().optional() } },
-    ...scip.facts,
   },
 })
 ```
@@ -461,7 +458,7 @@ committed:
 
 The projection manifest and the `/mcp` tool description advertise engine,
 dialect, and pinned revision as data, so querying agents know what they are
-talking to. Shipped tooling (surveys, bundle starter queries) sticks to the
+talking to. Shipped tooling (surveys, starter queries) sticks to the
 openCypher-portable core so it runs on both. Extensibility is the adapter
 contract itself, not a compatibility matrix. At scale-out (multi-writer,
 hundreds of millions of rows), the storage-adapter seam swaps SQLite for
