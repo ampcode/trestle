@@ -5,20 +5,20 @@ import { pathToFileURL } from "node:url";
 export interface VisualizationNodeStyle {
   /** Identity or property field used as the node label. Defaults to the identity tuple. */
   label?: string;
-  /** CSS hex color. Defaults to a stable color derived from the node kind. */
+  /** CSS color used as the G6VP default for this kind. */
   color?: string;
   /** Relative rendered size. Default: 1. */
   size?: number;
-  /** Hide this kind when the visualization first opens. */
+  /** Exclude this kind from the G6VP canvas. */
   hidden?: boolean;
 }
 
 export interface VisualizationEdgeStyle {
-  /** CSS hex color. Defaults to a stable color derived from the edge kind. */
+  /** CSS color used as the G6VP default for this kind. */
   color?: string;
-  /** Relative rendered width. Default: 1. */
+  /** G6VP line thickness. */
   width?: number;
-  /** Hide this kind when the visualization first opens. */
+  /** Exclude this kind from the G6VP canvas. */
   hidden?: boolean;
 }
 

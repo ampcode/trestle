@@ -9,7 +9,7 @@ export default {
   // always comes from the live SQLite store; unspecified kinds receive
   // stable colors and labels derived from their identity.
   visualization: {
-    title: "Trestle knowledge graph",
+    title: "Knowledge graph",
     nodes: {
       File: { label: "path", color: "#8b7cf6" },
     },

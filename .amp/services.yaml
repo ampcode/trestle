@@ -5,5 +5,5 @@ services:
     command: node bin/trestle.js serve --host 0.0.0.0 --port "$PORT"
     health: /health
     portal:
-      title: Trestle Graph
+      title: Knowledge Graph
       description: Explore the live Trestle knowledge graph; MCP at /mcp.

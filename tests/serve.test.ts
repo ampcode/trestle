@@ -62,15 +62,20 @@ test("health endpoint", async () => {
   assert.equal(res.status, 200);
 });
 
-test("serves the explorer, bundled renderer, and live graph API", async () => {
+test("serves G6VP and the live graph API", async () => {
   const root = await fetch(`http://127.0.0.1:${running.port}/`);
   assert.equal(root.status, 200);
   assert.match(root.headers.get("content-type") ?? "", /text\/html/);
-  assert.match(await root.text(), /Interactive knowledge graph/);
+  const html = await root.text();
+  assert.match(html, /Knowledge graph/);
 
-  const cosmos = await fetch(`http://127.0.0.1:${running.port}/assets/cosmos.js`);
-  assert.equal(cosmos.status, 200);
-  assert.ok((await cosmos.arrayBuffer()).byteLength > 100_000, "serves the local cosmos.gl bundle");
+  const scriptPath = /src="(\/assets\/index-[^"]+\.js)"/.exec(html)?.[1];
+  assert.ok(scriptPath, "missing G6VP application bundle");
+  const application = await fetch(`http://127.0.0.1:${running.port}${scriptPath}`);
+  assert.equal(application.status, 200);
+  const applicationSource = await application.text();
+  assert.ok(applicationSource.length > 1_000_000, "serves the G6VP application");
+  assert.match(applicationSource, /GI_SDK_VERSION/);
 
   const response = await fetch(`http://127.0.0.1:${running.port}/api/graph`);
   assert.equal(response.status, 200);
@@ -89,6 +94,16 @@ test("serves the explorer, bundled renderer, and live graph API", async () => {
   assert.ok(graph.stats.edges > 0);
   assert.ok(graph.nodes.some((node) => node.kind === "Program" && node.label === "ACCT01"));
   assert.ok(graph.edges.every((edge) => edge.confidence > 0 && edge.evidenceCount > 0));
+});
+
+test("visualization API can run Cypher against the projection", async () => {
+  const response = await fetch(`http://127.0.0.1:${running.port}/api/query`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: "MATCH (p:Program) RETURN p.name AS name ORDER BY name" }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), [{ name: "ACCT01" }, { name: "ACCT02" }, { name: "ACCT9M" }]);
 });
 
 test("MCP is exposed only at /mcp", async () => {

@@ -19,7 +19,7 @@ graph construction plugs into:
   knowledge.
 
 Each project runs in its own orb as a supervised service, exposing
-an interactive **GPU-rendered graph explorer** and an **MCP endpoint through
+an interactive **AntV G6VP** frontend and an **MCP endpoint through
 the orb portal** so humans and agents can inspect the same live graph.
 
 **Orchestration is deliberately out of scope.** Trestle constructs and serves
@@ -64,11 +64,14 @@ npx trestle serve            # graph explorer at /; MCP endpoint at /mcp
 `trestle serve` is the project's query endpoint. The committed
 `.amp/services.yaml` declares it as a supervised orb service: opening the
 Amp Portal tab starts it on demand, or run `amp orb services ensure`. The
-explorer at `/` reads the authoritative SQLite graph directly, so it
-reflects the next `extract` / `resolve` run after a browser refresh and
-does not require a LadybugDB projection. Other Amp threads can attach
-`<portal-url>/mcp` as a remote MCP server — or POST JSON-RPC directly — to
-query the knowledge graph without entering the orb.
+G6VP canvas at `/` reads the authoritative SQLite graph directly, so it
+reflects the next `extract` / `resolve` run after a browser refresh and does
+not require a LadybugDB projection. It provides force-directed and structured
+layouts, lasso selection, element highlighting, details, a mini-map, legends,
+tooltips, and PNG/CSV/JSON export. The `/api/query` endpoint and MCP
+`graph_query` tool run Cypher against the optional LadybugDB projection. Other
+Amp threads can attach `<portal-url>/mcp` as a remote MCP server — or POST
+JSON-RPC directly — to query the knowledge graph without entering the orb.
 
 Visualization presentation is Git-tracked TypeScript in
 `trestle.config.ts`:
@@ -84,9 +87,14 @@ export default {
 } satisfies TrestleConfig;
 ```
 
-Unconfigured kinds get deterministic colors and identity-derived labels.
+Unconfigured kinds use stable G6VP colors and identity-derived labels.
 Restart the declared service after editing presentation config with
 `amp orb service restart trestle`; graph data itself updates on browser refresh.
+`trestle.config.ts` remains the Git-tracked source for project presentation.
+
+The bundled frontend uses G6VP's Apache-2.0-licensed `@antv/gi-sdk` and basic
+asset library. Its pinned source, dependency lock, license, and reproducible
+build instructions are retained in `src/viz/upstream/`.
 
 ### Upgrading
 

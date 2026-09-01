@@ -1,7 +1,7 @@
 /**
  * `trestle serve`: the project's query endpoint (ARCHITECTURE §5/§7).
  *
- * A browser graph explorer and MCP server, meant to run as one supervised
+ * A browser graph-analysis canvas and MCP server, meant to run as one supervised
  * service inside the project orb and be exposed through the orb portal.
  *
  * HTTP: GET / is the explorer, GET /api/graph is its live SQLite view, and
@@ -13,9 +13,8 @@
  * project-build keep working in the same orb while it runs.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { extname, join, resolve, sep } from "node:path";
 import { profileFromLock, type ProfileLock } from "../profile/define.ts";
 import { queryProjection } from "../project/ladybug.ts";
 import { Store } from "../store/store.ts";
@@ -338,8 +337,28 @@ function sendFile(res: ServerResponse, path: string, contentType: string, cacheC
 
 const PACKAGE_ROOT = join(import.meta.dirname, "..", "..");
 const VIZ_DIR = join(PACKAGE_ROOT, "src", "viz");
-const require = createRequire(import.meta.url);
-const COSMOS_BUNDLE = join(dirname(require.resolve("@cosmos.gl/graph")), "index.min.js");
+
+const CONTENT_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".xml": "application/xml; charset=utf-8",
+};
+
+function serveVisualizationAsset(res: ServerResponse, pathname: string): boolean {
+  if (pathname !== "/" && !pathname.startsWith("/assets/")) return false;
+  const relativePath = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+  const root = resolve(VIZ_DIR);
+  const path = resolve(root, relativePath);
+  if (!path.startsWith(`${root}${sep}`) || !existsSync(path) || !statSync(path).isFile()) return false;
+  const cacheControl = pathname === "/" ? "no-cache" : "public, max-age=31536000, immutable";
+  sendFile(res, path, CONTENT_TYPES[extname(path)] ?? "application/octet-stream", cacheControl);
+  return true;
+}
 
 export interface RunningServer {
   server: Server;
@@ -356,26 +375,20 @@ export function startServer(cfg: ServeConfig, opts: { port: number; host?: strin
         sendJson(res, 200, { ok: true });
         return;
       }
-      if (req.method === "GET" && pathname === "/") {
-        sendFile(res, join(VIZ_DIR, "index.html"), "text/html; charset=utf-8");
-        return;
-      }
-      if (req.method === "GET" && pathname === "/assets/app.js") {
-        sendFile(res, join(VIZ_DIR, "app.js"), "text/javascript; charset=utf-8");
-        return;
-      }
-      if (req.method === "GET" && pathname === "/assets/styles.css") {
-        sendFile(res, join(VIZ_DIR, "styles.css"), "text/css; charset=utf-8");
-        return;
-      }
-      if (req.method === "GET" && pathname === "/assets/cosmos.js") {
-        sendFile(res, COSMOS_BUNDLE, "text/javascript; charset=utf-8", "public, max-age=31536000, immutable");
-        return;
-      }
       if (req.method === "GET" && pathname === "/api/graph") {
         sendJson(res, 200, readVisualizationGraph(cfg));
         return;
       }
+      if (req.method === "POST" && pathname === "/api/query") {
+        const body = JSON.parse(await readBody(req)) as { query?: unknown };
+        if (typeof body.query !== "string" || body.query.trim() === "") {
+          sendJson(res, 400, { error: "query must be a non-empty string" });
+          return;
+        }
+        sendJson(res, 200, await queryProjection(cfg.projectionPath, body.query));
+        return;
+      }
+      if (req.method === "GET" && serveVisualizationAsset(res, pathname)) return;
       if (req.method !== "POST" || pathname !== "/mcp") {
         sendJson(res, 404, { error: "not found" });
         return;

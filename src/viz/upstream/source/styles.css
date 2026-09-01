@@ -1,0 +1,32 @@
+:root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0d0b; color: #d7dad6; }
+* { box-sizing: border-box; }
+html, body, #root, .app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+.app { background: #0b0d0b; }
+header { height: 36px; padding: 0 8px 0 12px; display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 20; border-bottom: 1px solid rgba(135, 139, 134, .12); background: #0c1516; font-size: 12px; line-height: 16px; }
+.title, .metadata { min-width: 0; display: flex; align-items: center; }
+.title { gap: 6px; }
+.crumb, .separator { color: #7f8981; font-weight: 400; }
+h1 { overflow: hidden; margin: 0; color: #e1e4df !important; font-size: 13px; line-height: 20px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.metadata { gap: 12px; color: #b7beb7; font-size: 12px; }
+.metadata > span + span { padding-left: 12px; border-left: 1px solid rgba(135, 139, 134, .2); }
+.revision { display: flex; align-items: center; gap: 6px; }
+.revision i { width: 6px; height: 6px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 1px #0c1516; }
+.canvas { position: absolute; inset: 36px 0 0; }
+.canvas > div { height: 100% !important; }
+.state { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 14px; align-items: center; justify-content: center; color: #9ca49c; background: #0b0d0b; }
+.state strong { color: #e1e4df; font-size: 15px; font-weight: 500; }
+.state code { max-width: 680px; color: #ff879f; white-space: pre-wrap; }
+.pulse { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, .5); animation: pulse 1.4s infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
+/* G6VP ships a light Ant Design skin. Trestle keeps controls legible on the dark canvas. */
+.gi-toolbar, [class*="gi-toolbar"] { filter: drop-shadow(0 10px 28px rgba(0,0,0,.35)); }
+.canvas .ant-btn { color: #cbd0ca; background: #101817; }
+.canvas .ant-btn:hover, .canvas .ant-btn:focus { color: #f6fff5; background: rgba(246, 255, 245, .07); }
+.graphin-components-legend .label { color: #b9c5e2 !important; }
+.gi-minimap > div { overflow: hidden; border: 1px solid #303952; border-radius: 10px; background: #111620 !important; box-shadow: 0 12px 36px rgba(0, 0, 0, .38) !important; }
+.gi-minimap > div, .gi-minimap .graphin-minimap, .gi-minimap canvas { width: 177px !important; }
+.gi-minimap canvas { opacity: .8; filter: invert(.88) hue-rotate(175deg); }
+.ant-tooltip-inner, .ant-popover-inner, .ant-dropdown-menu { color: #dce6ff; background: #151a26; }
+.ant-drawer-content, .ant-drawer-header { background: #111620; color: #dce6ff; }
+.ant-drawer-title, .ant-empty-description { color: #dce6ff; }
+@media (max-width: 680px) { header { height: 44px; padding-left: 12px; } .canvas { top: 44px; } .metadata span:not(.revision) { display: none; } }
