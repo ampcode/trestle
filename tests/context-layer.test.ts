@@ -14,6 +14,8 @@ import { buildLock, defineProfile } from "../src/profile/define.ts";
 import { t } from "../src/profile/schema.ts";
 import { pipeline } from "../src/extract/pipeline.ts";
 import { runExtraction } from "../src/extract/run.ts";
+import { resolver } from "../src/resolve/sdk.ts";
+import { runResolvers } from "../src/resolve/run.ts";
 
 const REPO = join(import.meta.dirname, "..");
 const SKILLS_DIR = join(REPO, ".agents", "skills");
@@ -138,6 +140,38 @@ test("stale sweep is skipped when a cell fails", async () => {
     assert.equal(r.cells.failed, 1);
     assert.equal(r.cells.stale, 0, "no stale sweep on a failed run");
     assert.equal(store.factCounts().find((c) => c.kind === "file-seen")?.count, 2, "facts preserved");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("declared nodes retire when their facts disappear", async () => {
+  const { dir, corpus, store } = makeEnv();
+  try {
+    const opts = { corpusRoots: [corpus], stateDir: join(dir, ".state"), fingerprintSeed: "s" };
+    const fileNodes = resolver({
+      name: "file-nodes",
+      phase: 10,
+      consumes: { facts: ["file-seen"] },
+      run(slice, emit) {
+        for (const fact of slice.facts("file-seen")) {
+          emit.node("File", { path: fact.props.path as string }, {}, { evidence: [fact] });
+        }
+      },
+    });
+    await runExtraction(store, perFilePipeline("cell"), opts);
+    await runResolvers(store, [fileNodes]);
+    assert.equal(store.liveNodes().length, 2);
+
+    // The file vanishes: its cell is never invoked again, its fact retires,
+    // and on re-resolve the declared node must retire with it.
+    rmSync(join(corpus, "b.txt"));
+    await runExtraction(store, perFilePipeline("cell"), opts);
+    await runResolvers(store, [fileNodes]);
+    const live = store.liveNodes();
+    assert.equal(live.length, 1, "node without live evidence retired");
+    assert.equal((live[0]!.identity as { path: string }).path, "a.txt");
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

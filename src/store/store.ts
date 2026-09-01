@@ -478,6 +478,7 @@ export class Store {
       const canon = (stable: string): string => find(stable);
 
       // 3. Node directives (declared enrichment).
+      const declaredNow = new Set<string>();
       for (const d of directives) {
         if (d.op !== "node") continue;
         const def = profile.nodes[d.kind];
@@ -488,6 +489,7 @@ export class Store {
           throw new Error(`directive rejected:\n  - ${[...idErrors, ...propErrors].join("\n  - ")}`);
         const stable = canon(this.nodeStableId(d.kind, d.identity));
         this.upsertNode(d.kind, d.identity, stable, d.props ?? {}, "declared", resolverName, rev);
+        declaredNow.add(stable);
         applied.node++;
 
         for (const ev of d.evidence ?? []) {
@@ -600,6 +602,18 @@ export class Store {
         )
         .run(rev, resolverName);
       applied.retired += Number(orphanStubs.changes);
+      //    ...and its previously declared nodes it no longer declares, once
+      //    they have no live evidence and no live edge references (the
+      //    declaring facts were retired, so the declaration retires with them).
+      const staleDeclared = this.db
+        .prepare(
+          `UPDATE nodes SET retired_rev = ? WHERE owner = ? AND provenance = 'declared' AND retired_rev IS NULL
+           AND stable_id NOT IN (SELECT value FROM json_each(?))
+           AND NOT EXISTS (SELECT 1 FROM evidence ev WHERE ev.entity_stable = nodes.stable_id AND ev.retired_rev IS NULL)
+           AND NOT EXISTS (SELECT 1 FROM edges e WHERE (e.from_stable = nodes.stable_id OR e.to_stable = nodes.stable_id) AND e.retired_rev IS NULL)`,
+        )
+        .run(rev, resolverName, JSON.stringify([...declaredNow]));
+      applied.retired += Number(staleDeclared.changes);
 
       this.db.exec("COMMIT");
     } catch (err) {
