@@ -9,7 +9,10 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "../src/cli/main.ts";
-import { queryProjection, tableName } from "../src/project/ladybug.ts";
+import { buildProjection, queryProjection, tableName } from "../src/project/ladybug.ts";
+import { Store } from "../src/store/store.ts";
+import { buildLock, defineProfile } from "../src/profile/define.ts";
+import { t } from "../src/profile/schema.ts";
 
 const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini");
 let stateDir: string;
@@ -79,4 +82,47 @@ test("project build + Cypher queries over the mainframe graph", async (t) => {
     const rows = await queryProjection(projectionPath(), `MATCH (n) RETURN COUNT(*) AS c`);
     assert.equal(Number(rows[0]!.c), 6);
   });
+});
+
+test("reserved-word kinds and props survive projection (identifier quoting)", async () => {
+  // Real collisions from dogfood runs: node kind "Table", props "group"
+  // and "table" are Cypher/Ladybug reserved words. The projection must
+  // quote identifiers instead of forcing profile renames.
+  const profile = defineProfile({
+    nodes: { Table: { identity: ["name"], props: { group: t.string() } } },
+    edges: { Order: { from: ["Table"], to: ["Table"], props: { table: t.string() } } },
+    facts: {},
+  });
+  const dir = mkdtempSync(join(tmpdir(), "trestle-quote-"));
+  const store = new Store(join(dir, "trestle.db"));
+  try {
+    store.activateProfile(profile, buildLock(profile).hash);
+    store.applyDirectives("test-resolver", "0", [
+      { op: "node", kind: "Table", identity: { name: "CUSTOMER" }, props: { group: "CORE" } },
+      { op: "node", kind: "Table", identity: { name: "ORDERS" }, props: { group: "SALES" } },
+      {
+        op: "edge",
+        kind: "Order",
+        from: { kind: "Table", identity: { name: "CUSTOMER" } },
+        to: { kind: "Table", identity: { name: "ORDERS" } },
+        props: { table: "JOIN_T" },
+        evidence: [{ sourcePath: "x.sql", locator: { line: 1 } }],
+      },
+    ]);
+    const dbPath = join(dir, "projection.lbug");
+    const r = await buildProjection(store, dbPath);
+    assert.equal(r.nodes, 2);
+    assert.equal(r.edges, 1);
+    const rows = await queryProjection(
+      dbPath,
+      "MATCH (a:`Table`)-[r:`Order`]->(b:`Table`) RETURN a.`group` AS g, r.`table` AS t, b.name AS n",
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.g, "CORE");
+    assert.equal(rows[0]!.t, "JOIN_T");
+    assert.equal(rows[0]!.n, "ORDERS");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

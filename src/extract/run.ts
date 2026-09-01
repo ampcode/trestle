@@ -95,10 +95,10 @@ export async function runExtraction(
       if (typeof filter === "string") return out.filter((p) => p.endsWith(filter));
       return out.filter((p) => filter.test(p));
     },
-    read(path) {
+    read(path, encoding = "utf8") {
       const abs = findAbs(path);
       recordRead(path, abs);
-      return readFileSync(abs, "utf8");
+      return readFileSync(abs, encoding);
     },
     readBytes(path) {
       const abs = findAbs(path);

@@ -99,5 +99,10 @@ export default resolver({
 - `slice.facts(kind)` requires the kind in `consumes.facts`;
   `slice.nodes(kind?)`/`slice.edges(kind?)` read earlier phases' graph
   (entity mapping ≈ phase 10, joins ≈ 20, aggregation ≈ 30+).
+- `slice.evidenceFor(stableId)` returns the live evidence rows behind a
+  prior-phase node or edge. A derived edge (e.g. SHARES_MUTABLE_X computed
+  from co-writer edges) should pass those rows straight into its own
+  `evidence` so it cites the original facts instead of inventing a weaker
+  locator.
 - Per-rule branching with confidence: `rules("set", [{ name, when, ... }])`
   then `.require(x)` / `.apply(x)`.

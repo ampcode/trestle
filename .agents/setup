@@ -23,3 +23,9 @@ fi
 
 echo ".agents/setup: installing dependencies"
 npm install
+
+# Archive corpora (non-git estates): refetch from committed manifests.
+if ls corpora/*.source.json >/dev/null 2>&1; then
+  echo ".agents/setup: restoring archive corpora"
+  npx trestle corpus restore
+fi

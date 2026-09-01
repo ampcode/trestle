@@ -36,12 +36,17 @@ export async function loadResolvers(dir: string): Promise<ResolverModule[]> {
 /** Run resolvers in phase order; each application is one revision. */
 export async function runResolvers(store: Store, resolvers: ResolverModule[]): Promise<ResolveResult[]> {
   const ordered = [...resolvers].sort((a, b) => a.phase - b.phase || a.name.localeCompare(b.name));
+  // A renamed or deleted resolver never runs again, so nothing retires its
+  // prior contribution. Sweep before the pass: abandoned output vanishes
+  // first, and a renamed resolver re-declares its graph under the new name.
+  store.retireAbandonedOwners(ordered.map((d) => d.name));
   const results: ResolveResult[] = [];
   for (const def of ordered) {
     const slice = makeSlice({
       factsByKind: (k) => store.factsByKind(k),
       liveNodes: (k) => store.liveNodes(k),
       liveEdges: (k) => store.liveEdges(k),
+      liveEvidenceFor: (stableId) => store.liveEvidenceFor(stableId),
       consumedFacts: def.consumes?.facts,
     });
     const { emit, output } = makeEmitter();

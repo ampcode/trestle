@@ -20,10 +20,16 @@ import type { Profile } from "../profile/define.ts";
 import type { PropSchema } from "../profile/schema.ts";
 import type { Store } from "../store/store.ts";
 
+interface LbugQueryResult {
+  getAll(): Promise<Record<string, unknown>[]>;
+  close(): void;
+}
+
 interface LbugModule {
-  Database: new (path: string) => unknown;
+  Database: new (path: string) => { close(): Promise<void> };
   Connection: new (db: unknown) => {
-    query(cypher: string): Promise<{ getAll(): Promise<Record<string, unknown>[]> }>;
+    query(cypher: string): Promise<LbugQueryResult>;
+    close(): Promise<void>;
   };
 }
 
@@ -54,7 +60,54 @@ export function tableName(kind: string): string {
   return kind.replaceAll("-", "_");
 }
 
-type LbugConnection = InstanceType<LbugModule["Connection"]>;
+/**
+ * Backtick-quote an identifier for DDL/Cypher. Kind and property names come
+ * from user profiles and may collide with reserved words (GROUP, TABLE, ...);
+ * quoting makes the vocabulary safe instead of forcing renames.
+ */
+function ident(name: string): string {
+  return `\`${name.replaceAll("`", "``")}\``;
+}
+
+/**
+ * An open projection handle. LadybugDB requires deterministic teardown:
+ * leaked query results/connections/databases keep the file lock and a
+ * `.shadow` database-ID alive, causing intermittent mismatch failures on
+ * the next open.
+ */
+interface Handle {
+  conn: InstanceType<LbugModule["Connection"]>;
+  db: InstanceType<LbugModule["Database"]>;
+}
+
+async function closeHandle(handle: Handle): Promise<void> {
+  try {
+    await handle.conn.close();
+  } catch {
+    // closing is best-effort; the database close below still runs
+  }
+  try {
+    await handle.db.close();
+  } catch {
+    // ignore
+  }
+}
+
+/** Run a statement and discard the result, closing it deterministically. */
+async function exec(handle: Handle, cypher: string): Promise<void> {
+  const res = await handle.conn.query(cypher);
+  res.close();
+}
+
+/** Run a query and return all rows, closing the result deterministically. */
+async function all(handle: Handle, cypher: string): Promise<Record<string, unknown>[]> {
+  const res = await handle.conn.query(cypher);
+  try {
+    return await res.getAll();
+  } finally {
+    res.close();
+  }
+}
 
 function isLockError(err: unknown): boolean {
   return err instanceof Error && err.message.includes("Could not set lock");
@@ -65,14 +118,24 @@ function isLockError(err: unknown): boolean {
  * invocations (common when agents fan out) would otherwise fail immediately
  * with a lock error, so retry with backoff for a bounded window.
  */
-async function connect(lbug: LbugModule, dbPath: string, timeoutMs = 10_000): Promise<LbugConnection> {
+async function connect(lbug: LbugModule, dbPath: string, timeoutMs = 10_000): Promise<Handle> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
+    let db: Handle["db"] | null = null;
     try {
-      const conn = new lbug.Connection(new lbug.Database(dbPath));
-      await conn.query("RETURN 1"); // the file lock is taken lazily; force it now
-      return conn;
+      db = new lbug.Database(dbPath);
+      const conn = new lbug.Connection(db);
+      const handle: Handle = { conn, db };
+      await exec(handle, "RETURN 1"); // the file lock is taken lazily; force it now
+      return handle;
     } catch (err) {
+      if (db) {
+        try {
+          await db.close();
+        } catch {
+          // ignore
+        }
+      }
       if (!isLockError(err)) throw err;
       if (Date.now() >= deadline) {
         throw new Error(
@@ -140,71 +203,81 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
   const lbug = await loadLbug();
   const profile = store.requireProfile();
   // Regenerable by design — remove the database and its WAL/temp siblings;
-  // a stale .wal from a prior database ID makes the fresh one refuse to open.
-  for (const p of [dbPath, `${dbPath}.wal`, `${dbPath}.shm`]) {
+  // a stale .wal/.shadow from a prior database ID makes the fresh one
+  // refuse to open.
+  for (const p of [dbPath, `${dbPath}.wal`, `${dbPath}.shm`, `${dbPath}.shadow`]) {
     if (existsSync(p)) rmSync(p, { recursive: true, force: true });
   }
-  const conn = await connect(lbug, dbPath);
+  const handle = await connect(lbug, dbPath);
   const result: ProjectionResult = { path: dbPath, nodeTables: 0, relTables: 0, nodes: 0, edges: 0 };
 
-  // ---- DDL from the profile ----
-  for (const [kind, def] of Object.entries(profile.nodes)) {
-    const cols = nodeColumns(def)
-      .map((c) => `${c.name} ${c.type}`)
-      .join(", ");
-    await conn.query(
-      `CREATE NODE TABLE ${tableName(kind)}(stableId STRING, ${cols}${cols ? ", " : ""}propsJson STRING, provenance STRING, PRIMARY KEY (stableId))`,
-    );
-    result.nodeTables++;
-  }
-  for (const [kind, def] of Object.entries(profile.edges)) {
-    const pairs: string[] = [];
-    for (const from of def.from) for (const to of def.to) pairs.push(`FROM ${tableName(from)} TO ${tableName(to)}`);
-    const cols = edgeColumns(def)
-      .map((c) => `${c.name} ${c.type}, `)
-      .join("");
-    await conn.query(
-      `CREATE REL TABLE ${tableName(kind)}(${pairs.join(", ")}, ${cols}confidence DOUBLE, evidenceCount INT64)`,
-    );
-    result.relTables++;
-  }
-
-  // ---- nodes ----
-  const kindOfStable = new Map<string, string>();
-  for (const [kind, def] of Object.entries(profile.nodes)) {
-    const cols = nodeColumns(def);
-    for (const n of store.liveNodes(kind)) {
-      kindOfStable.set(n.stableId, kind);
-      const values = cols.map((c) => lit(c.fromProps ? n.props[c.name] : n.identity[c.name]));
-      const extras = Object.fromEntries(
-        Object.entries(n.props).filter(([p]) => !cols.some((c) => c.fromProps && c.name === p)),
+  try {
+    // ---- DDL from the profile ----
+    for (const [kind, def] of Object.entries(profile.nodes)) {
+      const cols = nodeColumns(def)
+        .map((c) => `${ident(c.name)} ${c.type}`)
+        .join(", ");
+      await exec(
+        handle,
+        `CREATE NODE TABLE ${ident(tableName(kind))}(stableId STRING, ${cols}${cols ? ", " : ""}propsJson STRING, provenance STRING, PRIMARY KEY (stableId))`,
       );
-      await conn.query(
-        `CREATE (:${tableName(kind)} {stableId: ${lit(n.stableId)}${cols.length ? ", " : ""}` +
-          cols.map((c, i) => `${c.name}: ${values[i]}`).join(", ") +
-          `, propsJson: ${lit(JSON.stringify(extras))}, provenance: ${lit(n.provenance)}})`,
-      );
-      result.nodes++;
+      result.nodeTables++;
     }
-  }
-
-  // ---- edges (confidence/evidenceCount derived from live evidence) ----
-  for (const [kind, def] of Object.entries(profile.edges)) {
-    const cols = edgeColumns(def);
-    for (const e of store.liveEdges(kind)) {
-      const fromKind = kindOfStable.get(e.fromStable);
-      const toKind = kindOfStable.get(e.toStable);
-      if (!fromKind || !toKind) continue; // endpoint not live; orphan cleanup owns this
-      const evidence = store.liveEvidenceFor(e.stableId);
-      const confidence = evidence.length ? Math.max(...evidence.map((ev) => Number(ev.confidence))) : 0;
-      await conn.query(
-        `MATCH (a:${tableName(fromKind)} {stableId: ${lit(e.fromStable)}}), (b:${tableName(toKind)} {stableId: ${lit(e.toStable)}}) ` +
-          `CREATE (a)-[:${tableName(kind)} {` +
-          cols.map((c) => `${c.name}: ${lit(e.props[c.name])}, `).join("") +
-          `confidence: ${confidence}, evidenceCount: ${evidence.length}}]->(b)`,
+    for (const [kind, def] of Object.entries(profile.edges)) {
+      const pairs: string[] = [];
+      for (const from of def.from)
+        for (const to of def.to) pairs.push(`FROM ${ident(tableName(from))} TO ${ident(tableName(to))}`);
+      const cols = edgeColumns(def)
+        .map((c) => `${ident(c.name)} ${c.type}, `)
+        .join("");
+      await exec(
+        handle,
+        `CREATE REL TABLE ${ident(tableName(kind))}(${pairs.join(", ")}, ${cols}confidence DOUBLE, evidenceCount INT64)`,
       );
-      result.edges++;
+      result.relTables++;
     }
+
+    // ---- nodes ----
+    const kindOfStable = new Map<string, string>();
+    for (const [kind, def] of Object.entries(profile.nodes)) {
+      const cols = nodeColumns(def);
+      for (const n of store.liveNodes(kind)) {
+        kindOfStable.set(n.stableId, kind);
+        const values = cols.map((c) => lit(c.fromProps ? n.props[c.name] : n.identity[c.name]));
+        const extras = Object.fromEntries(
+          Object.entries(n.props).filter(([p]) => !cols.some((c) => c.fromProps && c.name === p)),
+        );
+        await exec(
+          handle,
+          `CREATE (:${ident(tableName(kind))} {stableId: ${lit(n.stableId)}${cols.length ? ", " : ""}` +
+            cols.map((c, i) => `${ident(c.name)}: ${values[i]}`).join(", ") +
+            `, propsJson: ${lit(JSON.stringify(extras))}, provenance: ${lit(n.provenance)}})`,
+        );
+        result.nodes++;
+      }
+    }
+
+    // ---- edges (confidence/evidenceCount derived from live evidence) ----
+    for (const [kind, def] of Object.entries(profile.edges)) {
+      const cols = edgeColumns(def);
+      for (const e of store.liveEdges(kind)) {
+        const fromKind = kindOfStable.get(e.fromStable);
+        const toKind = kindOfStable.get(e.toStable);
+        if (!fromKind || !toKind) continue; // endpoint not live; orphan cleanup owns this
+        const evidence = store.liveEvidenceFor(e.stableId);
+        const confidence = evidence.length ? Math.max(...evidence.map((ev) => Number(ev.confidence))) : 0;
+        await exec(
+          handle,
+          `MATCH (a:${ident(tableName(fromKind))} {stableId: ${lit(e.fromStable)}}), (b:${ident(tableName(toKind))} {stableId: ${lit(e.toStable)}}) ` +
+            `CREATE (a)-[:${ident(tableName(kind))} {` +
+            cols.map((c) => `${ident(c.name)}: ${lit(e.props[c.name])}, `).join("") +
+            `confidence: ${confidence}, evidenceCount: ${evidence.length}}]->(b)`,
+        );
+        result.edges++;
+      }
+    }
+  } finally {
+    await closeHandle(handle);
   }
 
   return result;
@@ -216,7 +289,10 @@ export async function queryProjection(dbPath: string, cypher: string): Promise<R
   if (!existsSync(dbPath)) {
     throw new Error(`no projection at ${dbPath}; run \`trestle project build\` first`);
   }
-  const conn = await connect(lbug, dbPath);
-  const res = await conn.query(cypher);
-  return res.getAll();
+  const handle = await connect(lbug, dbPath);
+  try {
+    return await all(handle, cypher);
+  } finally {
+    await closeHandle(handle);
+  }
 }

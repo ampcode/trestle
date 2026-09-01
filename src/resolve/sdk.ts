@@ -24,12 +24,30 @@ export interface Slice {
   /** Read the graph produced by earlier phases. */
   nodes(kind?: string): NodeRow[];
   edges(kind?: string): EdgeRow[];
+  /**
+   * Live evidence rows backing a prior-phase node or edge (by stableId).
+   * Lets a derived edge cite the same facts as the edges it is derived
+   * from instead of inventing a weaker locator.
+   */
+  evidenceFor(stableId: string): EvidenceRow[];
+}
+
+/** Shaped to be assignable to EvidenceInput: pass rows straight into emit.edge evidence. */
+export interface EvidenceRow {
+  entityStable: string;
+  factId?: number;
+  sourcePath?: string;
+  locator?: unknown;
+  confidence: number;
+  resolver: string;
+  rule?: string;
 }
 
 export function makeSlice(deps: {
   factsByKind(kind: string): FactRow[];
   liveNodes(kind?: string): NodeRow[];
   liveEdges(kind?: string): EdgeRow[];
+  liveEvidenceFor(stableId: string): Record<string, unknown>[];
   consumedFacts: string[] | undefined;
 }): Slice {
   const cache = new Map<string, FactList>();
@@ -67,6 +85,16 @@ export function makeSlice(deps: {
     },
     nodes: (kind) => deps.liveNodes(kind),
     edges: (kind) => deps.liveEdges(kind),
+    evidenceFor: (stableId) =>
+      deps.liveEvidenceFor(stableId).map((r) => ({
+        entityStable: String(r.entity_stable),
+        factId: r.fact_id === null || r.fact_id === undefined ? undefined : Number(r.fact_id),
+        sourcePath: r.source_path === null || r.source_path === undefined ? undefined : String(r.source_path),
+        locator: typeof r.locator === "string" ? JSON.parse(r.locator) : undefined,
+        confidence: Number(r.confidence),
+        resolver: String(r.resolver),
+        rule: r.rule === null || r.rule === undefined ? undefined : String(r.rule),
+      })),
   };
 }
 

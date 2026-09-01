@@ -3,8 +3,12 @@ import type { FactInput } from "../store/store.ts";
 export interface Corpus {
   /** Corpus-relative paths, sorted. Optional filter is a RegExp or suffix string. */
   list(filter?: RegExp | string): string[];
-  /** Read as UTF-8. Every read is recorded; content hashes feed cache keys. */
-  read(path: string): string;
+  /**
+   * Read as text. Every read is recorded; content hashes feed cache keys.
+   * Defaults to UTF-8; pass "latin1" for legacy estates whose sources
+   * predate UTF-8 (UTF-8 decoding would insert replacement characters).
+   */
+  read(path: string, encoding?: "utf8" | "latin1"): string;
   readBytes(path: string): Uint8Array;
 }
 

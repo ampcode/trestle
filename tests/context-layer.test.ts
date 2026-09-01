@@ -37,9 +37,15 @@ test("packaged skills are well-formed", () => {
 test("the graph repo ships its user surface committed at the root", () => {
   // The repo IS the application: no init, no scaffold, no install of
   // trestle itself. These files must exist in every clone.
-  for (const f of ["trestle.config.ts", "profile.ts", "extract/pipeline.ts", "resolvers/inventory.ts", "AGENTS.md"]) {
+  for (const f of ["trestle.config.ts", "profile.ts", "extract/pipeline.ts", "AGENTS.md"]) {
     assert.ok(existsSync(join(REPO, f)), `missing user-surface file ${f}`);
   }
+  // The resolver surface is a contract (≥1 resolver), not a filename:
+  // graph authors split and name resolvers per estate.
+  const resolverFiles = readdirSync(join(REPO, "resolvers")).filter(
+    (f) => f.endsWith(".ts") && !f.startsWith("_") && !f.endsWith(".test.ts"),
+  );
+  assert.ok(resolverFiles.length >= 1, "resolvers/ must contain at least one resolver");
   const configText = readFileSync(join(REPO, "trestle.config.ts"), "utf8");
   assert.match(configText, /corpusRoots: \["corpora"\]/);
   assert.match(configText, /visualization:/);
@@ -140,6 +146,59 @@ test("stale sweep is skipped when a cell fails", async () => {
     assert.equal(r.cells.failed, 1);
     assert.equal(r.cells.stale, 0, "no stale sweep on a failed run");
     assert.equal(store.factCounts().find((c) => c.kind === "file-seen")?.count, 2, "facts preserved");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("renamed or removed resolvers retire their prior output", async () => {
+  const { dir, corpus, store } = makeEnv();
+  try {
+    const opts = { corpusRoots: [corpus], stateDir: join(dir, ".state"), fingerprintSeed: "s" };
+    const makeFileResolver = (name: string) =>
+      resolver({
+        name,
+        phase: 10,
+        consumes: { facts: ["file-seen"] },
+        run(slice, emit) {
+          for (const fact of slice.facts("file-seen")) {
+            emit.node("File", { path: fact.props.path as string }, {}, { evidence: [fact] });
+          }
+        },
+      });
+    await runExtraction(store, perFilePipeline("cell"), opts);
+    await runResolvers(store, [makeFileResolver("old-name")]);
+    assert.equal(store.liveNodes().length, 2);
+
+    // Rename the resolver: the old owner never runs again, so the abandoned
+    // sweep must retire its nodes/evidence; the new owner re-declares them.
+    await runResolvers(store, [makeFileResolver("new-name")]);
+    const live = store.liveNodes();
+    assert.equal(live.length, 2, "same graph under the new owner");
+    assert.ok(live.every((n) => n.owner === "new-name"), "no rows owned by the removed resolver remain live");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("corpus.read supports latin1 for pre-UTF-8 estates", async () => {
+  const { dir, corpus, store } = makeEnv();
+  try {
+    // 0xE9 = é in Latin-1; invalid as UTF-8, so a utf8 read mangles it.
+    writeFileSync(join(corpus, "legacy.txt"), Buffer.from([0x63, 0x61, 0x66, 0xe9]));
+    let utf8 = "";
+    let latin1 = "";
+    const p = pipeline(async ({ corpus, memo }) => {
+      await memo("read-legacy", ["legacy.txt"], () => {
+        utf8 = corpus.read("legacy.txt");
+        latin1 = corpus.read("legacy.txt", "latin1");
+      });
+    });
+    await runExtraction(store, p, { corpusRoots: [corpus], stateDir: join(dir, ".state"), fingerprintSeed: "s" });
+    assert.equal(latin1, "café");
+    assert.notEqual(utf8, "café", "utf8 decode of latin1 bytes is lossy (replacement char)");
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

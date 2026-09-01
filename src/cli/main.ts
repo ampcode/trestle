@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildLock, profileFromLock, type Profile, type ProfileLock } from "../profile/define.ts";
@@ -14,7 +15,11 @@ import { loadConfig, type TrestleConfig } from "./config.ts";
 
 const USAGE = `trestle <command>
 
-  corpus add <url>     add an estate as a shallow submodule under corpora/
+  corpus add <url>     add an estate under corpora/: git URL -> shallow
+                       submodule (--ref <ref> pins a non-default ref);
+                       archive URL (or --archive) -> fetched + extracted,
+                       provenance in <name>.source.json (--sha256 verifies)
+  corpus restore       refetch archive corpora from their manifests
   profile build        compile profile.ts -> profile.lock.json
   profile check        verify profile.lock.json matches profile.ts
   extract              run the extraction pipeline (incremental)
@@ -37,8 +42,9 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
   const [command, sub] = argv;
   switch (command) {
     case "corpus": {
-      if (sub === "add") return corpusAdd(cwd, overrides, argv[2], argv[3]);
-      throw new Error(`usage: trestle corpus add <git-url> [name]`);
+      if (sub === "add") return corpusAdd(cwd, overrides, argv.slice(2));
+      if (sub === "restore") return corpusRestore(cwd, overrides);
+      throw new Error(`usage: trestle corpus add <git-url|archive-url> [name] [--ref <ref>] [--archive] [--sha256 <hash>] | trestle corpus restore`);
     }
     case "profile": {
       if (sub === "build") return profileBuild(cwd, overrides, { write: true });
@@ -74,25 +80,132 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
 
 /** ---------- corpus ---------- */
 
-async function corpusAdd(cwd: string, overrides: TrestleConfig, url: string | undefined, name: string | undefined): Promise<void> {
-  if (!url) throw new Error(`usage: trestle corpus add <git-url> [name]`);
-  const inferred = url.replace(/\/+$/, "").split("/").pop()?.replace(/\.git$/, "");
+const ARCHIVE_SUFFIXES = [".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".tar", ".zip"];
+
+interface CorpusSourceManifest {
+  type: "archive";
+  url: string;
+  sha256: string;
+}
+
+async function corpusAdd(cwd: string, overrides: TrestleConfig, args: string[]): Promise<void> {
+  // Flags: --ref <ref> (git), --archive, --sha256 <hash> (archive).
+  let ref: string | undefined;
+  let archive = false;
+  let expectedSha: string | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--ref") ref = args[++i];
+    else if (a === "--archive") archive = true;
+    else if (a === "--sha256") expectedSha = args[++i];
+    else positional.push(a);
+  }
+  const [url, name] = positional;
+  if (!url) throw new Error(`usage: trestle corpus add <git-url|archive-url> [name] [--ref <ref>] [--archive] [--sha256 <hash>]`);
+  const isArchive = archive || ARCHIVE_SUFFIXES.some((s) => new URL(url, "file:///").pathname.endsWith(s));
+
+  const base = url.replace(/\/+$/, "").split("/").pop() ?? "";
+  const inferred = isArchive
+    ? ARCHIVE_SUFFIXES.reduce((n, s) => (n.endsWith(s) ? n.slice(0, -s.length) : n), base)
+    : base.replace(/\.git$/, "");
   const corpusName = name ?? inferred;
   if (!corpusName || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(corpusName)) {
-    throw new Error(`cannot infer a corpus name from "${url}"; pass one: trestle corpus add <git-url> <name>`);
+    throw new Error(`cannot infer a corpus name from "${url}"; pass one: trestle corpus add <url> <name>`);
   }
   // Anchor at the graph repo root, into the first configured corpus root.
   const cfg = await loadConfig(cwd, overrides);
   const root = cfg.dir;
   const corpusRoot = relative(root, cfg.corpusRoots[0] ?? join(root, "corpora"));
-  if (corpusRoot.startsWith("..")) throw new Error(`corpus root ${cfg.corpusRoots[0]} is outside the repo; cannot add a submodule there`);
+  if (corpusRoot.startsWith("..")) throw new Error(`corpus root ${cfg.corpusRoots[0]} is outside the repo; cannot add a corpus there`);
   const path = join(corpusRoot, corpusName);
   if (existsSync(join(root, path))) throw new Error(`${path} already exists`);
+
+  if (isArchive) {
+    if (ref) throw new Error(`--ref applies only to git corpora`);
+    const manifest = await acquireArchiveCorpus(url, join(root, path), expectedSha);
+    // Tracked manifest = provenance; the extracted tree is ignored, like
+    // submodule contents. `trestle corpus restore` refetches from it.
+    const manifestPath = join(root, corpusRoot, `${corpusName}.source.json`);
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    ensureIgnored(join(root, corpusRoot), corpusName);
+    console.log(`added corpus ${path} (archive, sha256 ${manifest.sha256.slice(0, 12)}…)`);
+    console.log(`next: git add ${relative(root, manifestPath)} ${join(corpusRoot, ".gitignore")} && git commit`);
+    return;
+  }
+
   // Shallow submodule: the pinned gitlink SHA is the corpus provenance.
   execFileSync("git", ["submodule", "add", "--depth", "1", url, path], { cwd: root, stdio: "inherit" });
   execFileSync("git", ["config", "-f", ".gitmodules", `submodule.${path}.shallow`, "true"], { cwd: root });
-  console.log(`added corpus ${path} (shallow submodule, pinned by gitlink)`);
+  if (ref) {
+    // Pin a non-default ref (tag, branch, or SHA). Archived repos often
+    // keep the application on a non-default branch.
+    const sub = join(root, path);
+    execFileSync("git", ["fetch", "--depth", "1", "origin", ref], { cwd: sub, stdio: "inherit" });
+    execFileSync("git", ["checkout", "--detach", "FETCH_HEAD"], { cwd: sub, stdio: "inherit" });
+  }
+  console.log(`added corpus ${path} (shallow submodule, pinned by gitlink${ref ? ` at ${ref}` : ""})`);
   console.log(`next: git add .gitmodules ${path} && git commit`);
+}
+
+/** Download, verify, and extract an archive corpus. Returns its manifest. */
+async function acquireArchiveCorpus(url: string, destDir: string, expectedSha?: string): Promise<CorpusSourceManifest> {
+  console.log(`fetching ${url} …`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
+  const data = Buffer.from(await res.arrayBuffer());
+  const actualSha = sha256(data);
+  if (expectedSha && actualSha !== expectedSha) {
+    throw new Error(`sha256 mismatch for ${url}\n  expected ${expectedSha}\n  actual   ${actualSha}`);
+  }
+  const tmp = mkdtempSync(join(tmpdir(), "trestle-corpus-"));
+  const pathname = new URL(url, "file:///").pathname;
+  const archivePath = join(tmp, pathname.split("/").pop() || "corpus-archive");
+  writeFileSync(archivePath, data);
+  mkdirSync(destDir, { recursive: true });
+  try {
+    if (archivePath.endsWith(".zip")) {
+      execFileSync("unzip", ["-q", archivePath, "-d", destDir], { stdio: "inherit" });
+    } else {
+      execFileSync("tar", ["-xf", archivePath, "-C", destDir], { stdio: "inherit" });
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+  return { type: "archive", url, sha256: actualSha };
+}
+
+/** Re-fetch archive corpora whose extracted trees are missing (fresh clone). */
+async function corpusRestore(cwd: string, overrides: TrestleConfig): Promise<void> {
+  const cfg = await loadConfig(cwd, overrides);
+  let restored = 0;
+  for (const corpusRoot of cfg.corpusRoots) {
+    if (!existsSync(corpusRoot)) continue;
+    for (const entry of readdirSync(corpusRoot)) {
+      if (!entry.endsWith(".source.json")) continue;
+      const name = entry.slice(0, -".source.json".length);
+      const dest = join(corpusRoot, name);
+      if (existsSync(dest)) {
+        console.log(`corpus ${name}: present, skipping`);
+        continue;
+      }
+      const manifest = JSON.parse(readFileSync(join(corpusRoot, entry), "utf8")) as CorpusSourceManifest;
+      if (manifest.type !== "archive") throw new Error(`${entry}: unknown corpus source type "${manifest.type}"`);
+      await acquireArchiveCorpus(manifest.url, dest, manifest.sha256);
+      console.log(`restored corpus ${relative(cfg.dir, dest)} (sha256 verified)`);
+      restored++;
+    }
+  }
+  console.log(restored === 0 ? `nothing to restore (git corpora: git submodule update --init --depth 1)` : `${restored} corpus(es) restored`);
+}
+
+/** Ensure <name>/ is git-ignored inside the corpus root (extracted trees are not committed). */
+function ensureIgnored(corpusRootAbs: string, name: string): void {
+  const gitignore = join(corpusRootAbs, ".gitignore");
+  const line = `${name}/`;
+  const existing = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
+  if (existing.split("\n").some((l) => l.trim() === line)) return;
+  writeFileSync(gitignore, existing + (existing.endsWith("\n") || existing === "" ? "" : "\n") + line + "\n");
 }
 
 /** ---------- profile ---------- */
@@ -137,7 +250,12 @@ function readLock(lockPath: string): ProfileLock | null {
 
 /** ---------- stages ---------- */
 
-/** Content hash of all .ts sources under a directory (recursive, sorted). */
+/**
+ * Content hash of every file under a directory (recursive, sorted).
+ * All files count, not just .ts: pipelines shell out to helper tools
+ * (extract/tools/*.java, scripts, grammars) whose edits must invalidate
+ * memo cells just like pipeline code edits do.
+ */
 function hashDirSources(dir: string): string {
   const entries: [string, string][] = [];
   const walk = (d: string): void => {
@@ -145,7 +263,7 @@ function hashDirSources(dir: string): string {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const p = join(d, e.name);
       if (e.isDirectory()) walk(p);
-      else if (e.isFile() && e.name.endsWith(".ts")) entries.push([relative(dir, p), sha256(readFileSync(p))]);
+      else if (e.isFile()) entries.push([relative(dir, p), sha256(readFileSync(p))]);
     }
   };
   walk(dir);
@@ -194,6 +312,7 @@ async function resolveCmd(cwd: string, overrides: TrestleConfig): Promise<void> 
   try {
     const resolvers = await loadResolvers(cfg.resolversDir);
     if (resolvers.length === 0) throw new Error(`no resolvers found in ${cfg.resolversDir}`);
+    const before = liveCounts(store);
     const results = await runResolvers(store, resolvers);
     for (const r of results) {
       const a = r.applied;
@@ -203,10 +322,30 @@ async function resolveCmd(cwd: string, overrides: TrestleConfig): Promise<void> 
           (r.ignored > 0 ? `, ${r.ignored} ignored` : ""),
       );
     }
-    console.log(`(directive counts, not live rows — see \`trestle status\`)`);
+    // Directive counts read as churn even when the pass is a semantic no-op
+    // (each resolver retires + reapplies its own provenance). The live-row
+    // delta is the idempotency signal.
+    const after = liveCounts(store);
+    const deltas = (Object.keys(after) as (keyof typeof after)[])
+      .filter((k) => after[k] !== before[k])
+      .map((k) => `${k} ${after[k] - before[k] > 0 ? "+" : ""}${after[k] - before[k]}`);
+    console.log(deltas.length === 0 ? `live graph unchanged` : `live graph delta: ${deltas.join(", ")}`);
   } finally {
     store.close();
   }
+}
+
+function liveCounts(store: Store): Record<"facts" | "nodes" | "edges" | "evidence" | "claims" | "aliases", number> {
+  const count = (table: string): number =>
+    (store.db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE retired_rev IS NULL`).get() as { c: number }).c;
+  return {
+    facts: count("facts"),
+    nodes: count("nodes"),
+    edges: count("edges"),
+    evidence: count("evidence"),
+    claims: count("claims"),
+    aliases: count("aliases"),
+  };
 }
 
 async function survey(cwd: string, overrides: TrestleConfig): Promise<void> {

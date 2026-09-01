@@ -30,6 +30,13 @@ detection), edge kinds become rel tables with `confidence` and
 Facts persist: iterating on resolvers needs only `resolve` + `survey`.
 Re-run `extract` after corpus, pipeline, or profile changes. Everything is
 safe to re-run; each stage retires and replaces its own prior output.
+Renamed or deleted resolver files are handled: the next `resolve` retires
+the missing owner's prior output before the pass runs.
+
+Idempotency signals: a clean re-extract prints `0 cells computed, N
+skipped`; a clean re-resolve ends with `live graph unchanged`. Per-resolver
+directive counts always show churn (each resolver retires and reapplies its
+own provenance) — read the live-graph delta line, not the directive counts.
 
 ## Reading the survey
 
@@ -68,6 +75,14 @@ resolver. A resolver workaround for a transcription gap hardens the gap.
 
 At the graph repo root: `profile.ts` + `profile.lock.json` (committed),
 `extract/pipeline.ts`, `resolvers/*.ts`, `trestle.config.ts`, read-only
-corpus submodules under `corpora/` (add with `trestle corpus add
-<git-url>`), and gitignored `.state/` (SQLite store, frozen artifacts).
-Deleting `.state/` is safe — everything regenerates from the corpus.
+corpora under `corpora/`, and gitignored `.state/` (SQLite store, frozen
+artifacts). Deleting `.state/` is safe — everything regenerates from the
+corpus.
+
+Adding corpora: `trestle corpus add <git-url>` pins a shallow submodule;
+`--ref <ref>` pins a non-default branch/tag/SHA (archived repos often keep
+the application off the default branch). For non-git sources,
+`trestle corpus add <archive-url> [name] [--sha256 <hash>]` downloads,
+verifies, and extracts a tarball/zip, committing only a
+`corpora/<name>.source.json` manifest; `trestle corpus restore` refetches
+missing archive corpora on a fresh clone.

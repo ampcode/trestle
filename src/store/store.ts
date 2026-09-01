@@ -623,6 +623,71 @@ export class Store {
     return { rev, applied };
   }
 
+  /**
+   * Retire the live output of resolvers that are no longer in the active
+   * set (renamed or deleted resolver files never run again, so nothing
+   * else retires their contribution). Facts are cell-owned and untouched.
+   * Nodes still referenced by another resolver's live edge, or still
+   * carrying live evidence, are kept — mirroring the orphan cleanup in
+   * applyDirectives.
+   */
+  retireAbandonedOwners(activeOwners: string[]): { retired: number; owners: string[] } {
+    const activeJson = JSON.stringify(activeOwners);
+    const abandoned = new Set<string>();
+    for (const [table, col] of [
+      ["nodes", "owner"],
+      ["edges", "owner"],
+      ["evidence", "resolver"],
+      ["claims", "resolver"],
+      ["aliases", "resolver"],
+    ] as const) {
+      const rows = this.db
+        .prepare(
+          `SELECT DISTINCT ${col} AS o FROM ${table}
+           WHERE retired_rev IS NULL AND ${col} NOT IN (SELECT value FROM json_each(?))`,
+        )
+        .all(activeJson) as { o: string }[];
+      for (const r of rows) abandoned.add(r.o);
+    }
+    if (abandoned.size === 0) return { retired: 0, owners: [] };
+
+    const owners = [...abandoned].sort();
+    const ownersJson = JSON.stringify(owners);
+    const rev = this.beginRevision("resolve-retire-abandoned", { owners });
+    let retired = 0;
+    this.db.exec("BEGIN");
+    try {
+      for (const [table, col] of [
+        ["evidence", "resolver"],
+        ["claims", "resolver"],
+        ["aliases", "resolver"],
+        ["edges", "owner"],
+      ] as const) {
+        const r = this.db
+          .prepare(
+            `UPDATE ${table} SET retired_rev = ? WHERE retired_rev IS NULL
+             AND ${col} IN (SELECT value FROM json_each(?))`,
+          )
+          .run(rev, ownersJson);
+        retired += Number(r.changes);
+      }
+      const nodes = this.db
+        .prepare(
+          `UPDATE nodes SET retired_rev = ? WHERE retired_rev IS NULL
+           AND owner IN (SELECT value FROM json_each(?))
+           AND NOT EXISTS (SELECT 1 FROM edges e WHERE (e.from_stable = nodes.stable_id OR e.to_stable = nodes.stable_id) AND e.retired_rev IS NULL)
+           AND NOT EXISTS (SELECT 1 FROM evidence ev WHERE ev.entity_stable = nodes.stable_id AND ev.retired_rev IS NULL)`,
+        )
+        .run(rev, ownersJson);
+      retired += Number(nodes.changes);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+    return { retired, owners };
+  }
+
   /** Insert a stub for a referenced-but-undeclared node; no-op if a live row exists. */
   private vivify(
     kind: string,

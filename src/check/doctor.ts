@@ -213,14 +213,14 @@ export function runDoctor(store: Store): DoctorReport {
       .prepare(
         `SELECT entity_stable, resolver, COUNT(*) AS copies FROM evidence
          WHERE retired_rev IS NULL
-         GROUP BY entity_stable, IFNULL(fact_id, -1), resolver, IFNULL(rule, '')
+         GROUP BY entity_stable, IFNULL(fact_id, -1), resolver, IFNULL(rule, ''), IFNULL(source_path, ''), IFNULL(locator, '')
          HAVING COUNT(*) > 1`,
       )
       .all() as { entity_stable: string; resolver: string; copies: number }[];
     add(
       "duplicate-evidence",
       "warn",
-      "identical live evidence rows (same entity, fact, resolver, rule)",
+      "identical live evidence rows (same entity, fact, resolver, rule, source, locator)",
       "the resolver cites the same fact twice for one directive; deduplicate before emitting",
       rows.map((r) => `${r.entity_stable} x${r.copies} (resolver ${r.resolver})`),
     );
