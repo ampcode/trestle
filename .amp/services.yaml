@@ -1,0 +1,9 @@
+# Trestle graph endpoint as a supervised orb service (`amp orb services
+# ensure`). Needs `npx trestle profile build` once before it can start.
+services:
+  trestle:
+    command: node bin/trestle.js serve --port "$PORT"
+    health: /health
+    portal:
+      title: Trestle graph
+      description: MCP endpoint — graph_query, survey, status, doctor.

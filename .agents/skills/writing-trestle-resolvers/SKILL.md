@@ -45,7 +45,7 @@ with `rule:` so the survey and reviewers can trace conclusions.
 Mechanical rewrite (`mapFacts`):
 
 ```ts
-// trestle/resolvers/unit-mapping.ts
+// resolvers/unit-mapping.ts
 import { resolver, mapFacts } from "trestle";
 
 export default resolver({

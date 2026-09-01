@@ -46,7 +46,7 @@ keeps it per evidence row.
 ## Mechanics (copy this shape)
 
 ```ts
-// trestle/extract/pipeline.ts
+// extract/pipeline.ts
 import { pipeline } from "trestle";
 
 export default pipeline(async ({ corpus, memo, run, acquire, emit }) => {
@@ -63,8 +63,9 @@ export default pipeline(async ({ corpus, memo, run, acquire, emit }) => {
 ```
 
 - `corpus.list/read/readBytes` — the only way to touch source; roots from
-  `trestle.config.ts` (`corpusRoots`, default the host repo). Reads are
-  recorded into the cell fingerprint automatically.
+  `trestle.config.ts` (`corpusRoots`, default `corpora/` — one pinned
+  submodule per estate, read-only). Reads are recorded into the cell
+  fingerprint automatically.
 - `memo(name, inputs, fn)` — the incremental cell. Unchanged inputs (and
   unchanged pipeline code) skip the body; changed cells retire and replace
   their previous facts; a cell that disappears from the run has its facts

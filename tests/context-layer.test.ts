@@ -1,21 +1,22 @@
 /**
- * The context layer (packaged skills + init stubs) and the incrementality
- * fixes surfaced by the OFBiz dogfood run: fingerprint seeds invalidate
- * cells on code/profile change, and stale cells retire their facts.
+ * The context layer (skills + the committed graph-repo user surface) and
+ * the incrementality fixes surfaced by the OFBiz dogfood run: fingerprint
+ * seeds invalidate cells on code/profile change, and stale cells retire
+ * their facts.
  */
-import { test, before, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCli } from "../src/cli/main.ts";
 import { Store } from "../src/store/store.ts";
 import { buildLock, defineProfile } from "../src/profile/define.ts";
 import { t } from "../src/profile/schema.ts";
 import { pipeline } from "../src/extract/pipeline.ts";
 import { runExtraction } from "../src/extract/run.ts";
 
-const SKILLS_DIR = join(import.meta.dirname, "..", "skills");
+const REPO = join(import.meta.dirname, "..");
+const SKILLS_DIR = join(REPO, ".agents", "skills");
 
 test("packaged skills are well-formed", () => {
   const dirs = readdirSync(SKILLS_DIR);
@@ -31,43 +32,27 @@ test("packaged skills are well-formed", () => {
   }
 });
 
-test("init copies full packaged skills to the host", async () => {
-  const host = mkdtempSync(join(tmpdir(), "trestle-init-"));
-  try {
-    await runCli(["init"], host);
-    for (const dir of readdirSync(SKILLS_DIR)) {
-      const installed = join(host, ".agents", "skills", dir, "SKILL.md");
-      assert.ok(existsSync(installed), `missing skill ${dir}`);
-      const content = readFileSync(installed, "utf8");
-      const packagedSkill = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf8");
-      assert.ok(content.startsWith(packagedSkill.trimEnd()), `${dir}: not the full packaged content`);
-      assert.match(content, /Project addenda/);
-    }
-    // Harness manifest pins the installed engine version; tsconfig ships too.
-    const manifest = JSON.parse(readFileSync(join(host, "trestle", "package.json"), "utf8"));
-    const ownVersion = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")).version;
-    assert.equal(manifest.dependencies.trestle, `git+https://ampcode.com/@jesse/trestle#semver:^${ownVersion}`);
-    assert.ok(existsSync(join(host, "trestle", "tsconfig.json")), "missing tsconfig.json");
-    // Environment bootstrap: executable, targets the harness dir.
-    const setup = join(host, ".agents", "setup");
-    assert.ok(existsSync(setup), "missing .agents/setup");
-    assert.ok(statSync(setup).mode & 0o100, ".agents/setup not executable");
-    assert.match(readFileSync(setup, "utf8"), /cd trestle && npm install/);
-    // Amp plugin is scaffolded verbatim from the packaged copy.
-    const plugin = join(host, ".amp", "plugins", "trestle.ts");
-    assert.ok(existsSync(plugin), "missing .amp/plugins/trestle.ts");
-    const packaged = readFileSync(join(import.meta.dirname, "..", ".amp", "plugins", "trestle.ts"), "utf8");
-    assert.equal(readFileSync(plugin, "utf8"), packaged);
-    // Re-init never overwrites: mark a stub and the plugin, re-run, markers survive.
-    const marker = join(host, ".agents", "skills", readdirSync(SKILLS_DIR)[0]!, "SKILL.md");
-    writeFileSync(marker, "EDITED\n");
-    writeFileSync(plugin, "EDITED\n");
-    await runCli(["init"], host);
-    assert.equal(readFileSync(marker, "utf8"), "EDITED\n");
-    assert.equal(readFileSync(plugin, "utf8"), "EDITED\n");
-  } finally {
-    rmSync(host, { recursive: true, force: true });
+test("the graph repo ships its user surface committed at the root", () => {
+  // The repo IS the application: no init, no scaffold, no install of
+  // trestle itself. These files must exist in every clone.
+  for (const f of ["trestle.config.ts", "profile.ts", "extract/pipeline.ts", "resolvers/inventory.ts", "AGENTS.md"]) {
+    assert.ok(existsSync(join(REPO, f)), `missing user-surface file ${f}`);
   }
+  assert.match(readFileSync(join(REPO, "trestle.config.ts"), "utf8"), /corpusRoots: \["corpora"\]/);
+  // Node package self-reference: user files import "trestle" from source.
+  const pkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8"));
+  assert.equal(pkg.name, "trestle");
+  assert.equal(pkg.exports["."], "./src/index.ts");
+  // Environment bootstrap: executable, inits submodules, installs at root.
+  const setup = join(REPO, ".agents", "setup");
+  assert.ok(existsSync(setup), "missing .agents/setup");
+  assert.ok(statSync(setup).mode & 0o100, ".agents/setup not executable");
+  const setupText = readFileSync(setup, "utf8");
+  assert.match(setupText, /git submodule update --init --depth 1/);
+  assert.match(setupText, /^npm install$/m);
+  // Graph endpoint declared as a supervised orb service.
+  assert.match(readFileSync(join(REPO, ".amp", "services.yaml"), "utf8"), /trestle\.js serve --port "\$PORT"/);
+  assert.ok(existsSync(join(REPO, ".amp", "plugins", "trestle.ts")), "missing .amp/plugins/trestle.ts");
 });
 
 /** ---------- incrementality fixes ---------- */

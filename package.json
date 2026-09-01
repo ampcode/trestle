@@ -1,32 +1,20 @@
 {
   "name": "trestle",
   "version": "0.1.0",
-  "description": "Knowledge graph harness for code migration: extract facts from any corpus, resolve a typed evidence graph, project boundaries, and serve it to coding agents.",
+  "description": "Knowledge graph harness for code migration: fork this repo, pin your estates as submodules under corpora/, extract facts, resolve a typed evidence graph, and serve it to coding agents.",
   "type": "module",
   "license": "MIT",
+  "private": true,
   "engines": {
     "node": ">=23.6"
   },
   "bin": {
     "trestle": "./bin/trestle.js"
   },
-  "files": [
-    "bin",
-    "dist",
-    "src",
-    "skills",
-    "examples",
-    ".amp/plugins"
-  ],
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "prepare": "npm run build",
     "test": "node --test 'tests/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },

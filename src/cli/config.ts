@@ -3,7 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export interface TrestleConfig {
-  /** Corpus roots, relative to the config file's directory. Default: [".."]. */
+  /** Corpus roots, relative to the config file's directory. Default: ["corpora"]. */
   corpusRoots?: string[];
   /** State directory (gitignored). Default: ".state". */
   state?: string;
@@ -26,7 +26,8 @@ export interface ResolvedConfig {
 }
 
 export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Promise<ResolvedConfig> {
-  // Accept either the trestle/ dir itself or a host repo containing trestle/.
+  // The project root is where trestle.config.ts lives. Legacy embedded
+  // layouts (a trestle/ dir inside a host repo) still resolve.
   let dir = resolve(cwd);
   if (!existsSync(join(dir, "trestle.config.ts")) && existsSync(join(dir, "trestle", "trestle.config.ts"))) {
     dir = join(dir, "trestle");
@@ -42,7 +43,7 @@ export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Pr
   const stateDir = rel(cfg.state ?? ".state");
   return {
     dir,
-    corpusRoots: (cfg.corpusRoots ?? [".."]).map(rel),
+    corpusRoots: (cfg.corpusRoots ?? ["corpora"]).map(rel),
     stateDir,
     dbPath: join(stateDir, "trestle.db"),
     projectionPath: join(stateDir, "projection.lbug"),

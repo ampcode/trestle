@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Environment bootstrap for this Trestle graph repo.
+# Idempotent: safe to re-run on a warm filesystem or stale snapshot.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# Trestle runs TypeScript natively and needs Node >= 23.6.
+if ! command -v node >/dev/null 2>&1; then
+  echo ".agents/setup: node not found; install Node >= 23.6" >&2
+  exit 1
+fi
+if ! node -e 'const [M,m]=process.versions.node.split(".").map(Number);process.exit(M>23||(M===23&&m>=6)?0:1)'; then
+  echo ".agents/setup: node $(node -v) is too old for trestle (need >= 23.6)" >&2
+  exit 1
+fi
+
+# Corpus submodules: shallow, read-only source material under corpora/.
+if [ -f .gitmodules ] && git rev-parse --git-dir >/dev/null 2>&1; then
+  echo ".agents/setup: initializing corpus submodules"
+  git submodule update --init --depth 1
+fi
+
+echo ".agents/setup: installing dependencies"
+npm install

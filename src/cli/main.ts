@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildLock, profileFromLock, type Profile, type ProfileLock } from "../profile/define.ts";
@@ -9,11 +10,10 @@ import { runExtraction } from "../extract/run.ts";
 import { loadResolvers, runResolvers } from "../resolve/run.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import { loadConfig, type TrestleConfig } from "./config.ts";
-import { harnessPackageJson, setupScript, TEMPLATES } from "./templates.ts";
 
 const USAGE = `trestle <command>
 
-  init                 scaffold a trestle/ project directory (never overwrites)
+  corpus add <url>     add an estate as a shallow submodule under corpora/
   profile build        compile profile.ts -> profile.lock.json
   profile check        verify profile.lock.json matches profile.ts
   extract              run the extraction pipeline (incremental)
@@ -36,8 +36,10 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
   }
   const [command, sub] = argv;
   switch (command) {
-    case "init":
-      return init(cwd);
+    case "corpus": {
+      if (sub === "add") return corpusAdd(cwd, argv[2], argv[3]);
+      throw new Error(`usage: trestle corpus add <git-url> [name]`);
+    }
     case "profile": {
       if (sub === "build") return profileBuild(cwd, overrides, { write: true });
       if (sub === "check") return profileBuild(cwd, overrides, { write: false });
@@ -77,7 +79,7 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
 
 /** ---------- packaged skills ---------- */
 
-const SKILLS_DIR = join(import.meta.dirname, "../../skills");
+const SKILLS_DIR = join(import.meta.dirname, "../../.agents/skills");
 
 interface PackagedSkill {
   name: string;
@@ -110,67 +112,22 @@ function skillsGet(name: string | undefined): void {
   console.log(skill.content);
 }
 
-/** ---------- init ---------- */
+/** ---------- corpus ---------- */
 
-function skillFile(s: PackagedSkill): string {
-  return `${s.content.trimEnd()}
-
-## Project addenda
-
-(add project-specific conventions for this topic here)
-`;
-}
-
-function init(cwd: string): void {
-  // Scaffold into ./trestle unless cwd already is a trestle dir.
-  const target = existsSync(join(cwd, "trestle.config.ts")) ? cwd : join(cwd, "trestle");
-  const manifest: Record<string, string> = existsSync(join(target, ".scaffold.json"))
-    ? JSON.parse(readFileSync(join(target, ".scaffold.json"), "utf8"))
-    : {};
-  const written: string[] = [];
-  const scaffoldFile = (rel: string, content: string, mode?: number): void => {
-    const path = join(target, rel);
-    if (existsSync(path)) return; // never overwrite
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, content);
-    if (mode !== undefined) chmodSync(path, mode);
-    manifest[rel] = sha256(content);
-    written.push(rel);
-  };
-  for (const [rel, content] of Object.entries(TEMPLATES)) scaffoldFile(rel, content);
-  // Harness manifest, pinned to the installed engine version, so a fresh
-  // clone can `npm install` inside trestle/ without trestle preinstalled.
-  const ownVersion = JSON.parse(readFileSync(join(import.meta.dirname, "../../package.json"), "utf8")).version as string;
-  scaffoldFile("package.json", harnessPackageJson(ownVersion));
-  // Host-level environment bootstrap: fresh orbs run .agents/setup once,
-  // then snapshot the result; stale snapshots re-run it on a warm fs.
-  const harnessDir = relative(join(target, ".."), target) || ".";
-  const setupPath = join(target, "..", ".agents", "setup");
-  const hadSetup = existsSync(setupPath);
-  scaffoldFile(join("..", ".agents", "setup"), setupScript(harnessDir), 0o755);
-  if (hadSetup && !readFileSync(setupPath, "utf8").includes("trestle")) {
-    console.log(`note: .agents/setup already exists; add to it:\n  (cd ${harnessDir} && npm install)`);
+function corpusAdd(cwd: string, url: string | undefined, name: string | undefined): void {
+  if (!url) throw new Error(`usage: trestle corpus add <git-url> [name]`);
+  const inferred = url.replace(/\/+$/, "").split("/").pop()?.replace(/\.git$/, "");
+  const corpusName = name ?? inferred;
+  if (!corpusName || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(corpusName)) {
+    throw new Error(`cannot infer a corpus name from "${url}"; pass one: trestle corpus add <git-url> <name>`);
   }
-  // Host-level skills: full packaged content, copied so agents need no
-  // node_modules to read them. Never overwritten once edited; the
-  // .scaffold.json hash lets an upgrade refresh pristine copies.
-  for (const s of packagedSkills()) {
-    scaffoldFile(join("..", ".agents", "skills", s.name, "SKILL.md"), skillFile(s));
-  }
-  // Host-level Amp plugin: trestle_auth/trestle_query/trestle_call, so any
-  // thread in the host repo can query this (or a remote) graph portal.
-  const packagedPlugin = join(import.meta.dirname, "..", "..", ".amp", "plugins", "trestle.ts");
-  if (existsSync(packagedPlugin)) {
-    scaffoldFile(join("..", ".amp", "plugins", "trestle.ts"), readFileSync(packagedPlugin, "utf8"));
-  }
-  writeFileSync(join(target, ".scaffold.json"), JSON.stringify(manifest, null, 2) + "\n");
-  if (written.length === 0) {
-    console.log(`nothing to do: all scaffold files already exist in ${target}`);
-  } else {
-    console.log(`scaffolded ${relative(cwd, target) || "."}:`);
-    for (const f of written) console.log(`  ${f}`);
-    console.log(`\nnext: cd ${relative(cwd, target) || "."} && npm install && npx trestle profile build && npx trestle extract && npx trestle resolve && npx trestle survey`);
-  }
+  const path = join("corpora", corpusName);
+  if (existsSync(join(cwd, path))) throw new Error(`${path} already exists`);
+  // Shallow submodule: the pinned gitlink SHA is the corpus provenance.
+  execFileSync("git", ["submodule", "add", "--depth", "1", url, path], { cwd, stdio: "inherit" });
+  execFileSync("git", ["config", "-f", ".gitmodules", `submodule.${path}.shallow`, "true"], { cwd });
+  console.log(`added corpus ${path} (shallow submodule, pinned by gitlink)`);
+  console.log(`next: git add .gitmodules ${path} && git commit`);
 }
 
 /** ---------- profile ---------- */

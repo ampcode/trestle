@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "tests", "examples"]
+  "include": ["src", "tests", "examples", "extract", "resolvers", "*.ts"]
 }

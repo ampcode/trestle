@@ -45,7 +45,7 @@ pair is correct.
 ## Mechanics (copy this shape)
 
 ```ts
-// trestle/profile.ts — inert data only; defineProfile rejects functions
+// profile.ts — inert data only; defineProfile rejects functions
 import { defineProfile, t } from "trestle";
 
 export default defineProfile({

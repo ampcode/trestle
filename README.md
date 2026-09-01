@@ -41,12 +41,17 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 Requires Node ≥ 24 (native TypeScript type stripping and `node:sqlite`).
 Trestle has zero runtime dependencies.
 
+**This repository IS the graph repo.** There is no separate install, no npm
+registry, and no `trestle init`: fork (or clone) this repo, add the code
+under analysis as pinned shallow submodules under `corpora/`, and edit the
+committed user surface at the root (`profile.ts`, `extract/pipeline.ts`,
+`resolvers/*.ts`). The analyzed repos are never modified.
+
 ```sh
-# Distributed through the Amp-hosted git remote (uses your Amp git
-# credentials; no npm registry needed). #semver: resolves pushed v* tags.
-npm install "git+https://ampcode.com/@jesse/trestle#semver:^0.1.0"
-npx trestle init             # scaffolds trestle/ (config, profile, extract, resolvers)
-cd trestle
+git clone <your-fork> graph-repo && cd graph-repo
+./.agents/setup              # node version check, submodules, npm install (orbs run this automatically)
+npx trestle corpus add https://github.com/apache/ofbiz-framework
+                             # estate as a shallow submodule under corpora/
 npx trestle profile build    # compile profile.ts -> profile.lock.json
 npx trestle extract          # run extraction pipeline -> facts
 npx trestle resolve          # run resolvers -> nodes/edges/evidence/claims
@@ -54,39 +59,38 @@ npx trestle survey           # what is still unresolved; what to work on next
 npx trestle doctor           # mechanical graph-health checks (duplication, staleness, drift)
 npx trestle project build    # materialize the Cypher projection (needs @ladybugdb/core)
 npx trestle project query 'MATCH (a)-[r]->(b) RETURN a, r, b LIMIT 10'
-npx trestle serve         # MCP server (graph_query, survey, status, doctor) for other threads
+npx trestle serve            # MCP server (graph_query, survey, status, doctor) for other threads
 ```
 
-`trestle serve` is the factory's query endpoint: run it as a supervised
-service in the project orb (`amp orb service start trestle-mcp --command
-'npx trestle serve' --portal`) and any Amp thread can attach the portal URL
-as a remote MCP server — or POST JSON-RPC directly — to query the knowledge
-graph without entering the orb.
+`trestle serve` is the project's query endpoint. The committed
+`.amp/services.yaml` declares it as a supervised orb service, so `amp orb
+services ensure` starts it and prints its portal URL; any Amp thread can
+attach that URL as a remote MCP server — or POST JSON-RPC directly — to
+query the knowledge graph without entering the orb.
 
-### Installing from a Git clone
+### Upgrading
 
-To deploy trestle from a clone instead of the npm registry, use a `file:`
-install so npm owns the link and preserves it across future installs:
+Git is the distribution channel. To pick up new engine versions, merge
+upstream into your fork:
 
 ```sh
-npm install /path/to/trestle-clone   # symlink managed by npm, not pruned
+git remote add upstream https://ampcode.com/@jesse/trestle   # once
+git fetch upstream
+git merge upstream/main
 ```
 
-Do not hand-create `node_modules/trestle` with `ln -s` — `npm install`
-prunes symlinks it did not create. Optional deps such as `@ladybugdb/core`
-are still installed in the host repo: trestle resolves them from the
-invoking project even when trestle itself is deployed as a symlink.
+Your project-owned files (`profile.ts`, `extract/`, `resolvers/`, `corpora/`)
+live beside the engine (`src/`) and rarely conflict.
 
 The loop is: edit `profile.ts` / `extract/pipeline.ts` / `resolvers/*.ts`,
 re-run `extract` + `resolve` (both incremental and idempotent), read `survey`,
-repeat. `AGENTS.md` in the scaffold teaches this loop to coding agents, and
-`trestle skills list|get <name>` serves the packaged, version-matched agent
-skills (init copies them in full into `.agents/skills/`, plus an
+repeat. The committed `AGENTS.md` teaches this loop to coding agents, the
+version-matched skills live in `.agents/skills/` (also served by
+`trestle skills list|get <name>`), and the committed
 `.amp/plugins/trestle.ts` Amp plugin — `trestle_auth` / `trestle_query` /
-`trestle_call` — so threads in the host repo can query a graph portal
-directly).
+`trestle_call` — lets threads query a graph portal directly.
 
-Developing trestle itself:
+Developing the engine (same repo, `src/` + `tests/`):
 
 ```sh
 npm install

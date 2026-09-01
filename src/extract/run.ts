@@ -87,6 +87,7 @@ export async function runExtraction(
     list(filter) {
       const out: string[] = [];
       for (const root of roots) {
+        if (!existsSync(root)) continue; // e.g. corpora/ before any corpus is added
         walk(root, root, out);
       }
       out.sort();

@@ -66,7 +66,8 @@ resolver. A resolver workaround for a transcription gap hardens the gap.
 
 ## Where things live
 
-`trestle/` in the host repo: `profile.ts` + `profile.lock.json` (committed),
-`extract/pipeline.ts`, `resolvers/*.ts`, `trestle.config.ts`, and gitignored
-`.state/` (SQLite store, frozen artifacts). Deleting `.state/` is safe —
-everything regenerates from the corpus.
+At the graph repo root: `profile.ts` + `profile.lock.json` (committed),
+`extract/pipeline.ts`, `resolvers/*.ts`, `trestle.config.ts`, read-only
+corpus submodules under `corpora/` (add with `trestle corpus add
+<git-url>`), and gitignored `.state/` (SQLite store, frozen artifacts).
+Deleting `.state/` is safe — everything regenerates from the corpus.

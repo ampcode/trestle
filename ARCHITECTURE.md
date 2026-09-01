@@ -70,7 +70,7 @@ not a runtime rejection mid-extraction — and bundle composition is an import
 plus a spread instead of a YAML merge algorithm.
 
 ```ts
-// trestle/profile.ts (illustrative)
+// profile.ts (illustrative)
 import { defineProfile, t } from "trestle"
 import scip from "trestle/scip/profile"            // bundle fragment: adopt, rename, or reject
 
@@ -323,7 +323,7 @@ drift is reported, never auto-deleted.
 
 Four mechanisms, in increasing order of coupling:
 
-1. **Profiles** (`trestle/profile.ts` → `profile.lock.json`, Git-tracked) —
+1. **Profiles** (`profile.ts` → `profile.lock.json`, Git-tracked) —
    vocabulary (node/edge/fact kind schemas, identity tuples), entrypoints
    (extraction pipeline, resolver phases), and projection policies
    (clustering weight models, scheduling edge selection). Declarative
@@ -340,7 +340,7 @@ Four mechanisms, in increasing order of coupling:
 3. **Amp skills** (`.agents/skills/`) — procedural guidance for agent roles:
    how to write a profile, an extraction pipeline, a resolver; how this
    project's vocabulary maps to its domain. Expanded only in threads.
-4. **Amp plugins** (`.amp/plugins/`) — the tool surface: the scaffolded
+4. **Amp plugins** (`.amp/plugins/`) — the tool surface: the committed
    `trestle.ts` plugin gives any thread graph query tools (`trestle_auth`
    to authenticate against a project portal, `trestle_query` for raw
    Cypher, `trestle_call` for remote survey/status/doctor).
@@ -359,8 +359,8 @@ Small, boring host:
   boundary for untrusted JSON, typed domain errors
   (`invalid_input | not_found | conflict` with reasons).
 - **CLI** exposing pipeline stages independently:
-  `trestle init | profile | extract | resolve | survey | status | doctor |
-  project | serve | skills`.
+  `trestle profile | extract | resolve | survey | status | doctor |
+  project | serve | skills | corpus add`.
 
 ### 7.1 Deployment: one orb per project
 
@@ -371,12 +371,13 @@ updates and orb pause/resume). `amp orb services ensure` starts it and prints
 its public portal URL — the project's single access point.
 
 ```diagram
-┌───────────────────────── project orb ─────────────────────────┐
+┌───────────────────── graph repo orb ──────────────────────────┐
 │  checkout (trunk)      trestle server (orb service)           │
-│  trestle/ profile,  ┌────────────────────────────────────┐    │
+│  profile,           ┌────────────────────────────────────┐    │
 │  pipeline,          │  /mcp   MCP (Streamable HTTP)      │    │
-│  resolvers          │  /ui    graph explorer             │    │
-│                     │  /health /ready                    │    │
+│  resolvers,         │  /ui    graph explorer             │    │
+│  corpora/ (pinned   │  /health /ready                    │    │
+│  submodules)        │                                    │    │
 │  store (SQLite:     └────────────────┬───────────────────┘    │
 │  facts+graph)                        │                        │
 │  Cypher projection                   │                        │
@@ -467,104 +468,98 @@ hundreds of millions of rows), the storage-adapter seam swaps SQLite for
 Postgres — where Apache AGE can serve Cypher in the same database — under
 the same logical contract.
 
-**The standard deployment shape: embedded.** Trestle is installed *into the
-host repo* — the repo being migrated — as a visible `trestle/` directory: a
-self-contained TypeScript package, ordinary reviewed source code (like
-`infra/` or `e2e/`), not hidden dotfile config. Self-contained because the
-host frequently isn't a JS project at all (a Java monolith, a COBOL estate):
-decomposing OFBiz must not require a `node_modules/` at the host root or
-edits to the host build. The corpus defaults to the enclosing repo
-(`corpusRoots: [".."]`); profile and resolver changes ship in the same PRs
-as the code. A dedicated factory repo with the estate as submodules remains an
-escape hatch (`trestle.config.ts` just points corpus roots elsewhere — this
-design repo itself does that for its case-study corpora), but it is not a
-documented peer mode; the standard is embedded.
+**The standard deployment shape: the trestle repo IS the graph repo.** A
+trestle project is a fork (or clone) of this repository. The engine
+(`src/`), the CLI (`bin/`), the agent context (`.agents/`), and the
+project-owned user surface (`profile.ts`, `extract/`, `resolvers/`,
+`corpora/`) live side by side in one repo the user runs in their own
+environment. There is no separate install, no npm registry, no `trestle
+init`, and no scaffold machinery: every clone is already initialized —
+`.agents/setup` bootstraps the environment (orbs run it automatically) and
+the loop commands work immediately.
+
+Git is both distribution and upgrade. New engine versions arrive by merging
+upstream (`git remote add upstream https://ampcode.com/@jesse/trestle; git
+fetch upstream; git merge upstream/main`); project-owned files rarely
+conflict with engine files because they occupy disjoint paths.
+
+The estates under analysis are pinned shallow submodules under `corpora/`
+(`trestle corpus add <git-url>`), which buys three things: the graph is
+naturally multi-repo (an enterprise migration rarely stops at one repo);
+the gitlink SHA of each submodule is corpus provenance for free — the graph
+repo's history records exactly which estate revision every fact was
+transcribed from; and the analyzed repos stay untouched — no
+`node_modules/`, no build edits, no PR against a codebase whose owners
+didn't ask for one. Source paths self-namespace as `<corpus-name>/…`
+because each estate is a named subdirectory of the single corpus root
+(`corpusRoots: ["corpora"]`). Regular filesystem and search tools work
+inside initialized submodules, so agents navigate the corpus like any
+checkout. Embedding trestle inside the analyzed repo remains possible
+(`corpusRoots: [".."]` and legacy `trestle/` directories still resolve),
+but it is an escape hatch, not a documented peer mode.
 
 ```
-<host repo root>
-  trestle/                     # self-contained TS package; the only thing Trestle asks of the host
-    package.json               #   deps: trestle (one package), plus user deps
-    tsconfig.json
-    AGENTS.md                  #   agent operating instructions for this directory (scaffolded)
-    trestle.config.ts          #   engine config: corpus roots, storage, service/portal
-    profile.ts                 #   vocabulary entrypoint (may import ./profile/*.ts fragments)
-    profile.lock.json          #   committed canonical snapshot; hash = profile revision
-    extract/pipeline.ts        #   the extraction pipeline entrypoint (user-owned)
-    resolvers/*.ts             #   resolver programs
-    .state/                    #   gitignored: local fact store cache, frozen artifacts, snapshots
+<graph repo root>              # a fork of the trestle repo
+  package.json                 # name "trestle", private; self-reference exports ./src/index.ts
+  tsconfig.json
+  AGENTS.md                    # agent operating instructions (committed)
+  trestle.config.ts            # engine config: corpus roots, storage, service/portal
+  profile.ts                   # vocabulary entrypoint (may import ./profile/*.ts fragments)
+  profile.lock.json            # committed canonical snapshot; hash = profile revision
+  extract/pipeline.ts          # the extraction pipeline entrypoint (user-owned)
+  resolvers/*.ts               # resolver programs (user-owned)
+  corpora/<name>/              # one pinned shallow submodule per estate (read-only)
+  bin/trestle.js               # CLI entrypoint
+  src/                         # the engine (upstream-owned; upgraded by merge)
+  tests/                       # engine tests
+  .state/                      # gitignored: local fact store cache, frozen artifacts, snapshots
+  .amp/services.yaml           # trestle serve as a supervised orb service + portal
   .amp/plugins/                # trestle.ts: graph query tools (auth, Cypher, survey/status/doctor)
-  .agents/setup                # environment bootstrap: Node >= 23.6 check + npm install in trestle/
-  .agents/skills/              # trestle-* skills (installed by init) + project skills
+  .agents/setup                # bootstrap: Node >= 23.6 check, submodule init, npm install
+  .agents/skills/              # trestle-* skills (committed) + project skills
 ```
 
-**What ships with Trestle: one npm package, `trestle`.** CLI, SDK, engine,
-bundles, and agent context are a single versioned artifact — one dependency
-in `trestle/package.json`, one version to reason about, one upgrade path.
-Four surfaces inside it:
+**No package boundary.** User files import the SDK by the package
+self-reference (`import { pipeline, resolver } from "trestle"` — Node
+resolves the repo's own `package.json` `exports` to `./src/index.ts`, type
+stripping the source directly). The package is `"private": true`; nothing is
+published. The four surfaces are repo directories, not package exports:
 
-1. **Runtime + CLI** — the package `bin`: server (store, revisions,
-   write-boundary validation, projection adapters, MCP/RPC/portal) and
-   `trestle init | add | extract | resolve | survey | profile build/check |
-   skills get | upgrade`.
-2. **SDK** — the root export (`import { defineProfile, t, pipeline,
-   resolver, … } from "trestle"`): the five primitives' client, resolver
-   kit (P0–P7), envelope/locator builders, helpers (tree-sitter wrapper,
-   XML/JSONL/protobuf readers).
-3. **Bundles** — subpath exports (`trestle/scip`, `trestle/java`,
-   `trestle/cobol`, …): acquirers, transcribers, profile fragments, starter
-   resolvers. `trestle add <bundle>` writes the fragment file if absent and
-   prints the import line for `profile.ts` — it never edits user code.
-   Heavy native dependencies (tree-sitter grammars, exotic parsers) are
-   optional peer deps declared by the subpath that needs them; importing a
-   bundle without its grammar fails with an actionable install message, so
-   a COBOL estate never pays for Java's toolchain.
-4. **Packaged context** — version-tracking prose lives *in the package*,
-   not the repo: `skills/` ships four semantics-first agent skills
-   (authoring-trestle-profiles, writing-trestle-extractors,
-   writing-trestle-resolvers, running-the-trestle-loop), surfaced via
-   `trestle skills list|get <name>`. Each leads with the semantic
-   decisions the migration author owns (what entities matter, what
-   question each resolver answers) and compresses engine mechanics into a
-   copyable footer. This keeps teaching content matched to the installed
-   version instead of drifting in scaffolded copies.
+1. **Runtime + CLI** — `src/` + `bin/trestle.js`:
+   `trestle profile build/check | extract | resolve | survey | status |
+   doctor | project | serve | skills | corpus add`.
+2. **SDK** — the `"trestle"` self-reference: profile builders
+   (`defineProfile`, `t.*`), the five extraction primitives
+   (`corpus`/`acquire`/`run`/`memo`/`emit`), the resolver SDK and kit.
+3. **User surface** — `profile.ts`, `extract/pipeline.ts`, `resolvers/*.ts`
+   ship as small running examples (a file-inventory fact emitter, a P0
+   mapping resolver) meant to be edited into the real pipeline; the
+   type-checker catches upgrade breaks after a merge.
+4. **Agent context** — `AGENTS.md` (the extract→resolve→survey loop,
+   pointers to skills, the corpora-are-read-only rule, a Project-notes
+   section), `.agents/skills/` (four semantics-first skills:
+   authoring-trestle-profiles, writing-trestle-extractors,
+   writing-trestle-resolvers, running-the-trestle-loop; also served by
+   `trestle skills list|get <name>`), and `.amp/plugins/trestle.ts`.
+   Context is version-matched by construction: it lives in the same
+   commit as the engine it describes.
 
-**Scaffold** — written into the host repo by `trestle init`, then owned and
-edited by the user. Repo-owned content is exactly what must diverge per
-project:
+*Environment bootstrap*: `.agents/setup` (Node ≥ 23.6 check, shallow corpus
+submodule init, `npm install`). Orbs run it once in a fresh sandbox and
+snapshot the result; a stale snapshot re-runs it on a warm filesystem, so
+the script is idempotent and fast when `node_modules` and submodules
+already exist.
 
-- *Seed code*: `extract/pipeline.ts` and `resolvers/*.ts` generated as
-  small running examples (a file-inventory fact emitter, a P0 mapping
-  resolver, a P1 join resolver with a claim path) — meant to be edited into
-  the real pipeline; the type-checker catches upgrade breaks.
-- *Agent context*: `trestle/AGENTS.md` (the extract→resolve→survey loop,
-  pointers to installed skills, a Project-notes section) and
-  `.agents/skills/<skill-name>/SKILL.md` (one per packaged skill, full
-  content copied so no `node_modules` is needed to read them, each ending
-  with a project-addenda section the user extends).
-- *Environment bootstrap*: `trestle/package.json` (pins the engine version
-  so a fresh clone can `npm install` without trestle preinstalled),
-  `trestle/tsconfig.json`, and host-level `.agents/setup` (Node ≥ 23.6
-  check + harness install). Orbs run `.agents/setup` once in a fresh
-  sandbox and snapshot the result; a stale snapshot re-runs it on a warm
-  filesystem, so the script is idempotent and fast when `node_modules`
-  already exists. If `.agents/setup` already exists, init leaves it alone
-  and prints the line to add.
-- *Ownership rule*: `init` never overwrites an existing file (re-running
-  fills gaps only); `trestle upgrade` re-renders only never-modified files
-  (tracked by content hash in `trestle/.scaffold.json`) and prints diffs
-  for the rest.
+*Serving*: `.amp/services.yaml` declares `trestle serve` as a supervised
+orb service with a portal, so `amp orb services ensure` exposes the graph
+MCP endpoint to other threads.
 
-The scaffold is the bootstrap-speed story made concrete: an agent pointed at
-a freshly `trestle init`-ed repo has running example code to imitate, typed
-contracts to satisfy, version-matched skills that teach the loop, and a
-survey that tells it what to do next.
-
-The single package trades release granularity for simplicity: a fix in the
-COBOL bundle bumps the whole package, and install size grows with bundled
-helpers (native grammars stay optional). At this stage one version
-everywhere is worth it; splitting bundles out later is a non-breaking
-refactor (subpath exports become packages re-exported under the same
-paths).
+This shape trades multi-project version pinning for radical simplicity:
+one repo, one commit, engine and project always consistent, no publish
+step, no version skew between skills and runtime. An agent pointed at a
+fresh clone has running example code to imitate, typed contracts to
+satisfy, version-matched skills that teach the loop, and a survey that
+tells it what to do next.
 
 Engine internals (not user-facing):
 
@@ -579,8 +574,8 @@ src/
   check/        # doctor: graph health checks (duplicates, orphans, hygiene)
   project/      # Cypher projection (LadybugDB materializer)
   server/       # MCP serve endpoint (graph_query, survey, status, doctor)
-  cli/          # init scaffold, profile build/check, extract, resolve, survey,
-                #   status, doctor, project, serve, skills
+  cli/          # profile build/check, extract, resolve, survey, status,
+                #   doctor, project, serve, skills, corpus add
 ```
 
 ## 8. Use-case mapping

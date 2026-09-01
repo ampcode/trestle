@@ -268,9 +268,8 @@ The streamlined experience the kit exists to serve — from empty project to
 working semantic graph:
 
 ```
-trestle init                    # pick nearest base profile (java, mainframe,
-                                #   rails, etl, blank); ontology + parser
-                                #   rules + phase-10/20 builtins scaffolded
+# fork/clone the trestle repo; edit profile.ts from the nearest example
+# (java, mainframe, …) — the repo ships running seed code to imitate
 trestle parse && trestle resolve
 trestle survey                  # THE step: coverage report over the six
                                 #   invariant relationships — % references
