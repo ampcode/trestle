@@ -1,0 +1,37 @@
+{
+  "trestleLockVersion": 1,
+  "hash": "fa0ffe95d7c2f04f47e964f9efd68ad26ac5c86d10ad54dfde5023eec7e89189",
+  "profile": {
+    "edges": {},
+    "facts": {
+      "file-inventoried": {
+        "props": {
+          "bytes": {
+            "t": "number"
+          },
+          "extension": {
+            "optional": true,
+            "t": "string"
+          },
+          "path": {
+            "t": "string"
+          }
+        },
+        "version": 1
+      }
+    },
+    "nodes": {
+      "File": {
+        "identity": [
+          "path"
+        ],
+        "props": {
+          "extension": {
+            "optional": true,
+            "t": "string"
+          }
+        }
+      }
+    }
+  }
+}
