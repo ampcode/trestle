@@ -90,7 +90,7 @@ export default resolver({
   "AGENTS.md": `# Trestle project
 
 This directory is the Trestle harness for this repository: profile
-(vocabulary), extraction pipeline, resolvers, and migration units.
+(vocabulary), extraction pipeline, and resolvers.
 
 ## The loop
 

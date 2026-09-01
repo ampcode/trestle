@@ -157,7 +157,6 @@ function init(cwd: string): void {
   if (existsSync(packagedPlugin)) {
     scaffoldFile(join("..", ".amp", "plugins", "trestle.ts"), readFileSync(packagedPlugin, "utf8"));
   }
-  mkdirSync(join(target, "units"), { recursive: true });
   writeFileSync(join(target, ".scaffold.json"), JSON.stringify(manifest, null, 2) + "\n");
   if (written.length === 0) {
     console.log(`nothing to do: all scaffold files already exist in ${target}`);

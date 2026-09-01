@@ -1,26 +1,32 @@
 # Trestle
 
-Trestle is a **metaharness**: the context and orchestration layer for a
-knowledge-graph-based automated code migration factory.
+Trestle is a **knowledge graph harness** for code migration and comprehension.
 
-It is not a migration tool for any particular language. It is the small,
-strongly-modeled core that project-specific migrations plug into:
+It is not a migration tool for any particular language, and it is not an
+orchestrator. It is the small, strongly-modeled core that project-specific
+graph construction plugs into:
 
 - a **knowledge graph** with a user-declared ontology, populated by custom
-  parsers and enriched by custom resolvers, where every edge carries evidence,
-  provenance, and confidence;
-- a **projection engine** that derives regenerable views (migration-unit
-  candidates, scheduling DAGs, search indexes, graph-DB materializations) from
-  the evidence graph without ever overwriting it;
-- an **orchestration ledger** that binds migration units to durable Amp
-  threads, schedules work over a dependency frontier, and gates completion on
-  verifiable evidence;
-- a **customization surface** of Git-tracked profiles, Amp skills, and Amp
-  plugins through which users encode project-specific knowledge.
+  extraction pipelines and enriched by custom resolvers, where every edge
+  carries evidence, provenance, and confidence;
+- a **projection engine** that derives regenerable views (boundary
+  candidates, search indexes, Cypher graph-DB materializations) from the
+  evidence graph without ever overwriting it;
+- a **serving surface** (MCP over the orb portal, CLI, Amp plugin) through
+  which coding agents, humans, and external orchestrators query the graph;
+- a **customization surface** of Git-tracked profiles, user TypeScript
+  programs, and Amp skills through which users encode project-specific
+  knowledge.
 
-Each migration project runs in its own orb as a supervised service, exposing
-an **MCP endpoint through the orb portal** so any other Amp thread can attach
-it as a remote MCP server and query the knowledge graph and ledger.
+Each project runs in its own orb as a supervised service, exposing an **MCP
+endpoint through the orb portal** so any other Amp thread can attach it as a
+remote MCP server and query the knowledge graph.
+
+**Orchestration is deliberately out of scope.** Trestle constructs and serves
+the graph; deciding what to migrate, binding work to agent threads, and
+tracking execution status belong to an external orchestrator (such as ampx)
+that consumes the graph read-only. See ARCHITECTURE.md §4–5 for the consumer
+contract.
 
 Target use cases:
 
@@ -97,6 +103,6 @@ Trestle generalizes two earlier experiments:
   replaces its closed COBOL ontology with a profile-declared one.
 - [ampxtra](https://github.com/JEdelstein25/ampxtra) (`ampx`) — a
   project-scoped coordination ledger for long-running migrations over Amp
-  thread actors. Trestle inherits its canonical-ownership discipline, durable
-  unit threads, reserve→provision→self-bind handshake, verification-gated
-  completion, and liveness driver.
+  thread actors. The reference external orchestrator: Trestle inherits its
+  canonical-ownership discipline and serves it the graph; ampx owns units,
+  bindings, and execution status.

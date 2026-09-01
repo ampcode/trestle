@@ -2,51 +2,51 @@
 
 ## 1. What Trestle is
 
-Trestle is a metaharness: a mini-application that owns the **core data model**
-and **orchestration mechanics** of an automated code migration, while pushing
-all domain knowledge — languages, grammars, resolution rules, boundary
-heuristics, acceptance policies — out to a customization surface the user
-controls.
+Trestle is a **knowledge graph harness**: a mini-application that owns the
+**core data model** and **graph mechanics** of code comprehension and
+migration, while pushing all domain knowledge — languages, grammars,
+resolution rules, boundary heuristics — out to a customization surface the
+user controls.
 
 The design bet: migrations as different as mainframe decommission and Java
 monolith modularization share the same skeleton —
 
 ```diagram
 ┌─────────────┐   ┌──────────────┐   ┌──────────────┐   ┌───────────────┐
-│   Extract   │──▶│   Resolve    │──▶│   Project    │──▶│  Orchestrate  │
-│ facts from  │   │ identities   │   │ units, DAGs, │   │ durable agents│
-│ any corpus  │   │ corpus-wide  │   │ risk, search │   │ + verification│
+│   Extract   │──▶│   Resolve    │──▶│   Project    │──▶│    Serve      │
+│ facts from  │   │ identities   │   │ boundaries,  │   │ graph to      │
+│ any corpus  │   │ corpus-wide  │   │ risk, search │   │ consumers     │
 └─────────────┘   └──────────────┘   └──────────────┘   └───────────────┘
-      ▲                  ▲                  ▲                   ▲
-      │                  │                  │                   │
-  parser plugins    resolver plugins   projection plugins   skills/policies
-  (per profile)     (per profile)      (per profile)        (per profile)
+      ▲                  ▲                  ▲                   │
+      │                  │                  │                   ▼
+  user pipeline     user resolvers     projection plugins   agents, humans,
+  (per profile)     (per profile)      (per profile)        orchestrators
 ```
 
-— and only the plugged-in pieces differ per project.
+— and only the plugged-in pieces differ per project. What happens *after*
+serving — deciding units of work, binding them to agent threads, tracking
+execution — is deliberately outside Trestle (§4–5).
 
 ## 2. Canonical ownership
 
-Every kind of information has exactly one authoritative home. The coordinator
-stores references, never copies. (Inherited directly from ampx; its strongest
-idea.)
+Every kind of information has exactly one authoritative home. Consumers store
+references, never copies. (Inherited directly from ampx; its strongest idea.)
 
 | System | Canonical for |
 |---|---|
 | **Evidence graph** (Trestle store) | observed facts: nodes, edges, evidence records, provenance, source lineage |
-| **Git** | desired state: ontology profiles, parser/resolver configs, unit declarations, skills, acceptance policies, landed code |
-| **Operational ledger** (Trestle store) | live execution metadata: unit↔thread bindings, coarse status + revision, scheduling dependency edges, reservations, evidence pointers |
+| **Git** | desired state: ontology profiles, extraction pipeline and resolver code, skills, landed code |
+| **External orchestrator** (e.g. ampx ledger) | live execution metadata: work units, thread bindings, statuses, reservations — outside Trestle entirely |
 | **Amp** | conversations, execution, tool calls, verification output, artifacts, thread lifecycle |
 
 Two rules follow:
 
-1. **Do not create a second representation unless the coordinator must enforce
-   an invariant over it.** Scheduling dependencies are copied into the ledger
-   because readiness derivation must be transactional with status; nothing
-   else is.
-2. **Derived state is never persisted as truth.** Readiness, frontiers,
-   cluster membership, and risk scores are recomputed from authoritative facts
-   or stored as explicitly versioned projections.
+1. **Do not create a second representation of another system's canonical
+   data.** Trestle never stores execution metadata; orchestrators never store
+   graph data — they hold at most a graph revision pointer and query the rest.
+2. **Derived state is never persisted as truth.** Cluster membership,
+   boundary candidates, and risk scores are recomputed from authoritative
+   facts or stored as explicitly versioned projections.
 
 ## 3. Core data model
 
@@ -59,8 +59,8 @@ Trestle lifts that a level: node kinds, edge kinds, and fact kinds are
 **Project standard: profiles are authored in TypeScript** and compiled to a
 canonical JSON snapshot the engine ingests. The kernel never imports
 `profile.ts`; `trestle profile build` evaluates it once and writes
-`profile.lock.json`, whose content hash is the profile revision the ledger
-references. `defineProfile` rejects functions anywhere in the tree —
+`profile.lock.json`, whose content hash is the profile revision that serving
+responses reference. `defineProfile` rejects functions anywhere in the tree —
 vocabulary must evaluate to inert, serializable data; behavior belongs in
 pipeline and resolver code. TypeScript is the authoring surface because the
 whole user-space already is: the declared fact/node/edge schemas become
@@ -192,8 +192,8 @@ params)`:
   membership records confidence and an assignment reason so a reviewer can
   challenge it.
 - **Scheduling DAG** — the narrow set of edge kinds that affect readiness,
-  compiled into the ledger. The rich graph keeps its dozens of edge kinds;
-  scheduling sees only `depends-on` and `conflicts-with`.
+  for consumers that sequence work. The rich graph keeps its dozens of edge
+  kinds; scheduling sees only `depends-on` and `conflicts-with`.
 - **Search index** — text + vector projection over nodes/edges for agent and
   human exploration.
 - **Cypher materialization** — the live graph slice materialized into an
@@ -239,7 +239,7 @@ uniqueness.
 
 **Revisions.** One monotonic counter for the whole project; a revision is a
 commit — any atomic apply batch (pipeline fact apply, resolver directive
-apply, alias merge, decision, profile activation, ledger transition) stamps
+apply, alias merge, decision, profile activation) stamps
 what it touched. Rows are immutable: every versioned entity carries
 `created_rev`/`retired_rev`, update = retire + insert under the same
 `stable_id`, uniqueness applies to live rows only. Consequences: the graph
@@ -255,93 +255,69 @@ fact + `(resolver, version, rule)`: the retirement key and the trace to
 bytes), `aliases`, `claims`, `decisions`; cross-cutting — `revisions`,
 `profile_snapshots` (old revisions stay interpretable under their own
 vocabulary), `runs`, `projections` (manifests pointing at regenerable
-outputs); ledger side — `units`, `unit_bindings`, `unit_transitions`
-(append-only CAS log), `reservations`. Directives have no table: their
-durable residue is evidence rows.
+outputs). Directives have no table: their durable residue is evidence rows.
 
 Invariants: append-only everywhere, judgment-deletion requires a decision
 row; every write names its owner (cell, resolver+version+rule, author);
 every row traces to bytes (node → evidence → fact → artifact → corpus
 revision, all hops fingerprinted); derived data pins its revision and is
-regenerable, or it belongs in `decisions`/ledger instead.
+regenerable, or it belongs in `decisions` instead.
 
-## 4. From projection to work: migration units
+## 4. From graph to work: the consumer contract
 
-A **migration unit** crosses the projection→orchestration boundary in three
-representations, each canonically owned by a different system:
+Trestle ends at the graph. Turning graph sections into units of work, binding
+them to agent threads, and tracking execution is an **external orchestrator's**
+job (ampx is the reference consumer). What Trestle owes such consumers is a
+small, stable read contract:
 
-```diagram
-┌────────────────────┐  promote   ┌──────────────────────┐  sync   ┌─────────────────┐
-│ Boundary candidate │───────────▶│ Git unit declaration │────────▶│  Ledger row     │
-│ (projection layer) │  (human/   │ trestle/units/*.md   │ (driver,│  + durable Amp  │
-│ regenerable        │   agent    │ scope, obligations,  │  addi-  │  thread binding │
-│ suggestion)        │   review)  │ deps, acceptance     │  tive)  │                 │
-└────────────────────┘            └──────────────────────┘         └─────────────────┘
-```
+- **Revision-stamped results.** Every serving response (CLI `--json`, MCP
+  tool result) names the graph revision — and, where known, the corpus commit
+  — it was derived from. A consumer's verification claim ("acceptance held")
+  is only meaningful relative to that stamp; a later extract that moves the
+  revision detectably stales it. Trestle exposes the stamp; it never stores
+  the claim.
+- **Scoped queries.** Consumers address graph *sections* generically — an
+  induced subgraph for a node set or selector, boundary-crossing edges,
+  unresolved claims and stub nodes within a section — via `graph_query`,
+  `survey`, and projection tools. Trestle has no privileged "unit" concept;
+  a scope is just a selector.
+- **Read-only consumption.** Consumers never write the graph. Graph writes
+  happen only through `extract`/`resolve` runs in the project checkout. If an
+  orchestrator wants its work units *represented in* the graph (Unit nodes,
+  OWNS edges, acceptance queries), it does so in userland: declarations in
+  Git are just another corpus, transcribed and resolved by an ordinary
+  profile. The kernel stays vocabulary-free.
+- **Boundary candidates stay disposable.** The projection layer emits
+  machine-derived, explainable, regenerable boundary suggestions. Promoting
+  a candidate to a committed work declaration is a human/orchestrator act
+  that happens outside Trestle.
 
-- **Candidate**: machine-derived, explainable, disposable.
-- **Declaration**: reviewed and committed — the human-auditable contract.
-  `Depends-On`, `Scope` (paths/areas), `Acceptance` (command), free-form
-  obligations, and a skill reference for unit-type-specific guidance.
-- **Ledger row**: `(unitId, threadId?, status, statusDetail, revision,
-  reservation)` — coarse lifecycle only, CAS-updated via revision.
+## 5. Orchestration: external by design
 
-Sync from Git to ledger is **additive**; ledger-only drift is reported, never
-auto-deleted. (ampx learned this the hard way — per-unit skill pointers in
-SQLite were removed because they duplicated Git and drifted.)
+An earlier revision of this document specced an orchestration layer inside
+Trestle (driver/unit-agent/worker roles, reserve→bind handshakes, a ledger
+with CAS transitions, verification-gated completion). That design is
+deliberately **not** implemented here: it duplicated ampx, which already owns
+durable-thread bindings, unit statuses, reservations, worker records, and
+broadcast. The spec survives in Git history if a native ledger is ever
+warranted.
 
-## 5. Orchestration layer
+The division of labor:
 
-Inherited from ampx with the graph attached. Actor roles:
+| Trestle provides | Orchestrator owns |
+|---|---|
+| evidence graph + revisions | unit declarations and lifecycle |
+| scoped queries, surveys, doctor | thread bindings, reservations, workers |
+| boundary-candidate projections | status transitions, scheduling frontier |
+| revision/commit stamps on results | verification claims and their freshness |
+| MCP/CLI/plugin serving surface | communication (broadcast) between threads |
 
-| Actor | Cardinality | Nature | Responsibility |
-|---|---|---|---|
-| **Driver** | 1, scheduled | durable thread | the only clock: sync, observe, reconcile, wake, budget, escalate. Liveness, not judgment. |
-| **Unit agent** | 1 per unit | durable thread | canonical execution record; plans, spawns workers, integrates, verifies, updates status |
-| **Worker** | N per unit | ephemeral thread | one bounded task: analyze, translate, implement, validate |
-| **Meta-agent** | ad hoc | ephemeral | human-driven ledger/graph surgery, reconciliation |
-
-Key mechanics, all reused from ampx:
-
-- **Reserve → provision → self-bind.** Provisioning a durable thread is a
-  handshake with an expiring reservation token; the new thread binds itself,
-  and the ledger enforces one-unit-per-thread / one-thread-per-unit. Dead
-  threads are replaced via compare-and-swap supersession; the old thread
-  remains historical evidence.
-- **Derived frontier.** `ready / waiting / in_progress / blocked / complete`
-  is computed fresh from statuses + scheduling edges on every query. Never
-  persisted.
-- **Verification-gated completion** — as a **ledger invariant**, not a prompt
-  instruction. A unit cannot become `complete` without a live `verification`
-  evidence pointer into its bound thread. Trestle extends the gate with graph
-  awareness: verification evidence records the **commit identity and graph
-  revision** it was produced against, so evidence staled by later changes to
-  the unit's scope is detectable and invalidates the gate.
-- **Pointer-only evidence with supersession.** Requirements, decisions,
-  constraints, blockers, findings, and verifications are typed pointers
-  `(unitId, threadId, messageIndex, kind)` — no copied text. New evidence
-  supersedes rather than deletes. In graph terms:
-  `MigrationUnit ─verified-by→ EvidencePointer ─at→ (commit, graphRevision)`.
-- **Trunk-based integration.** No per-unit branches. Small green commits
-  tagged `Migration-Unit: <unitId>`; collision control via declared disjoint
-  scopes and dependency serialization. Git history doubles as a progress
-  signal.
-
-Beyond ampx, Trestle adds:
-
-- **Graph-aware unit context.** When a unit agent starts, the harness hands it
-  the induced subgraph for its scope (its nodes, boundary-crossing edges,
-  unresolved claims, relevant source spans) rather than making it rediscover
-  everything. This is the "context layer" half of the metaharness: the graph
-  is the shared long-term memory that individual agent threads project slices
-  out of.
-- **Capability-scoped ledger auth.** Driver can plan/reserve; a unit agent can
-  update only its own unit; a worker can only self-register under its parent;
-  auditors are read-only. (ampx's shared bearer token was flagged as too broad
-  for a factory.)
-- **Attempt events (optional, per profile).** For factories that need retry
-  economics or failure clustering, attempts are immutable events referencing
-  threads — never overloaded onto unit status.
+The integration pattern: a coordinator agent holding both tool surfaces
+(Trestle's query tools and the orchestrator's ledger tools) syncs additively
+from Git-declared work to ledger rows, updates the orchestrator's graph
+revision pointer after each extract/resolve, and lets bound threads self-serve
+scope, surveys, and acceptance queries against Trestle's portal. Ledger-only
+drift is reported, never auto-deleted.
 
 ## 6. Customization surface
 
@@ -349,9 +325,9 @@ Four mechanisms, in increasing order of coupling:
 
 1. **Profiles** (`trestle/profile.ts` → `profile.lock.json`, Git-tracked) —
    vocabulary (node/edge/fact kind schemas, identity tuples), entrypoints
-   (extraction pipeline, resolver phases), and policies (clustering weight
-   models, scheduling edge selection, concurrency budgets, acceptance
-   policy). Declarative wiring only — never behavior.
+   (extraction pipeline, resolver phases), and projection policies
+   (clustering weight models, scheduling edge selection). Declarative
+   wiring only — never behavior.
 2. **User programs** — the primary surface for project-specific semantics;
    the user owns the entire path from artifact to graph entity, in two
    programs with one hard boundary (see EXTRACT-RESOLVE §1.6): the
@@ -362,14 +338,12 @@ Four mechanisms, in increasing order of coupling:
    agents can write them quickly; the JSON contracts are the only
    requirement.
 3. **Amp skills** (`.agents/skills/`) — procedural guidance for agent roles:
-   how to translate a CICS transaction, how to carve a Spring module, how this
-   project verifies behavior parity. Referenced by name from unit
-   declarations; expanded only in threads, never stored in the ledger.
-4. **Amp plugins** (`.amp/plugins/`) — the tool surface: `ledger` RPC
-   (capability-scoped), `graph` query tools (neighborhood, subgraph, search,
-   source spans), `broadcast` to durable threads, and a session-start context
-   injector that pins checkout sync status + Git-tracked operating
-   instructions into every thread.
+   how to write a profile, an extraction pipeline, a resolver; how this
+   project's vocabulary maps to its domain. Expanded only in threads.
+4. **Amp plugins** (`.amp/plugins/`) — the tool surface: the scaffolded
+   `trestle.ts` plugin gives any thread graph query tools (`trestle_auth`
+   to authenticate against a project portal, `trestle_query` for raw
+   Cypher, `trestle_call` for remote survey/status/doctor).
 
 ## 7. Runtime shape
 
@@ -381,15 +355,12 @@ Small, boring host:
   PostgreSQL (large corpora; unlocks HNSW vector search, trigram source
   search, and in-database AGE Cypher). Cypher serving is a projection
   behind its own engine adapter (§7.3), independent of this choice.
-  Evidence graph and ledger live in the same store but in strictly
-  separated schemas — the ledger must stay small and hot; the graph can
-  be big and cold.
-- **One authenticated RPC endpoint** for ledger + graph-query operations, a
-  registry generating both runtime dispatch and TS contracts, explicit decoder
+- **One authenticated endpoint** for graph-query operations, explicit decoder
   boundary for untrusted JSON, typed domain errors
   (`invalid_input | not_found | conflict` with reasons).
 - **CLI** exposing pipeline stages independently:
-  `trestle parse | ingest | resolve | project | sync | serve | snapshot`.
+  `trestle init | profile | extract | resolve | survey | status | doctor |
+  project | serve | skills`.
 
 ### 7.1 Deployment: one orb per project
 
@@ -402,61 +373,47 @@ its public portal URL — the project's single access point.
 ```diagram
 ┌───────────────────────── project orb ─────────────────────────┐
 │  checkout (trunk)      trestle server (orb service)           │
-│  trestle/ profile   ┌────────────────────────────────────┐    │
-│  units, pipeline,   │  /mcp   MCP (Streamable HTTP)      │    │
-│  resolvers          │  /rpc   registry RPC (CLI, plugins)│    │
-│                     │  /ui    graph explorer             │    │
-│  store (SQLite:     │  /health /ready                    │    │
-│  facts+graph+ledger)└────────────────┬───────────────────┘    │
+│  trestle/ profile,  ┌────────────────────────────────────┐    │
+│  pipeline,          │  /mcp   MCP (Streamable HTTP)      │    │
+│  resolvers          │  /ui    graph explorer             │    │
+│                     │  /health /ready                    │    │
+│  store (SQLite:     └────────────────┬───────────────────┘    │
+│  facts+graph)                        │                        │
 │  Cypher projection                   │                        │
 │  (LadybugDB file)                    │                        │
 └──────────────────────────────────────┼────────────────────────┘
                                        │  Amp portal (authn)
               ┌────────────────────────┼───────────────────────┐
               ▼                        ▼                       ▼
-        driver thread           unit agent threads       humans, meta-agents,
-        (scheduled)             + their workers           other tools
+      orchestrator threads      analysis threads       humans, meta-agents,
+      (e.g. ampx units)         (ad-hoc queries)       other tools
 ```
 
 ### 7.2 MCP through the portal
 
 The primary remote query surface is an **MCP endpoint (Streamable HTTP) served
-through the orb portal**. Any Amp thread — the driver, unit agents, workers,
-ad-hoc analysis threads, even threads in other repos — attaches the portal URL
-as a remote MCP server and gets the project's knowledge graph and ledger as
-tools, with no project-local plugin required:
+through the orb portal**. Any Amp thread — orchestrator threads, ad-hoc
+analysis threads, even threads in other repos — attaches the portal URL
+as a remote MCP server and gets the project's knowledge graph as tools, with
+no project-local plugin required:
 
-- **Graph tools (read-only):** `graph_search` (text + vector),
-  `graph_node` / `graph_neighborhood` / `graph_subgraph` (induced subgraph for
-  a unit scope or node set), `graph_source_span` (provenance-backed source
-  excerpts), `graph_claims` (unresolved low-confidence assertions),
-  `projection_list` / `projection_get` (boundary candidates, diagnostics).
-- **Ledger tools:** `unit_list` / `unit_get` / `unit_plan` (derived frontier),
-  `unit_reserve` / `unit_bind` / `unit_update_status`, `worker_record`,
-  `evidence_create` / `evidence_list`.
-- **MCP resources:** the profile, unit declarations, and snapshot manifests
-  exposed as readable resources so agents can cite exactly what they acted on.
+- **Graph tools (read-only):** `graph_query` (raw Cypher against the
+  projection), `survey` (unresolved-population report), `status` (live
+  counts), `doctor` (graph health checks).
+- **MCP resources:** the profile and snapshot manifests exposed as readable
+  resources so agents can cite exactly what they acted on.
 
-Two auth layers stack:
+**Portal authentication** gates transport. Signed-in browsers pass
+interactively; non-browser clients (an agent thread's MCP client, curl in
+another orb) redeem a single-use portal login URL, which sets a portal
+session cookie. Serving is read-only: graph writes happen only through
+`extract`/`resolve` runs in the project checkout, never over the wire.
 
-1. **Portal authentication** gates transport. Signed-in browsers pass
-   interactively; non-browser clients (an agent thread's MCP client, curl in
-   another orb) redeem a single-use portal login URL — the same
-   bearer-plus-portal-cookie handshake ampx's portal ledger client already
-   implements.
-2. **Capability tokens** gate operations. The MCP session presents a token
-   minted per actor role (§5): read-only exploration needs none beyond portal
-   access; a unit agent's token authorizes writes only to its own unit;
-   `unit_bind` and `worker_record` derive actor identity from the token, since
-   over MCP the ledger cannot observe the invoking thread the way a
-   project-local Amp plugin can.
-
-The `.amp/plugins/` surface (§6) remains for what MCP cannot do: injecting
-checkout-sync status and operating instructions into every session at start,
-and `broadcast` to durable threads via the Amp Plugin API. Threads working
-inside the project orb use plugin tools against localhost; everyone else uses
-the portal MCP URL. Both speak to the same registry, so tool contracts stay
-identical.
+The `.amp/plugins/` surface (§6) makes this ergonomic from any thread:
+`trestle_auth` performs the login handshake once and stores the session;
+`trestle_query`/`trestle_call` then hit the portal MCP endpoint directly.
+Threads working inside the project orb can talk to localhost instead. Both
+speak to the same server, so tool contracts stay identical.
 
 ### 7.3 Database runtime: SQLite of record, Cypher as projection
 
@@ -468,14 +425,14 @@ SQLite (system of record)                    Cypher engine (projection)
 ┌──────────────────────────┐   materialize   ┌─────────────────────────┐
 │ facts, evidence, nodes,  │────────────────▶│ per-kind node/rel tables│
 │ edges, claims, decisions,│   at revision N │ generated from profile  │
-│ revisions, ledger        │                 │ MATCH …-[:INVOKES]->…   │
+│ revisions                │                 │ MATCH …-[:INVOKES]->…   │
 └──────────────────────────┘                 └───────────┬─────────────┘
         ▲                                                │ Cypher
         └─ writes (pipeline, resolvers, decisions)       ▼
                                                 /mcp portal endpoint
 ```
 
-The interval-versioned, evidence-joined, ledger-transactional work is
+The interval-versioned, evidence-joined work is
 relational-shaped; SQLite in a single-writer orb does it well. Cypher
 serving is a **regenerable projection**: the live slice (`retired_rev IS
 NULL`) materialized into an embedded engine. This inverts two constraints:
@@ -518,8 +475,7 @@ host frequently isn't a JS project at all (a Java monolith, a COBOL estate):
 decomposing OFBiz must not require a `node_modules/` at the host root or
 edits to the host build. The corpus defaults to the enclosing repo
 (`corpusRoots: [".."]`); profile and resolver changes ship in the same PRs
-as the code, and migration units land as unit-tagged commits on the same
-trunk. A dedicated factory repo with the estate as submodules remains an
+as the code. A dedicated factory repo with the estate as submodules remains an
 escape hatch (`trestle.config.ts` just points corpus roots elsewhere — this
 design repo itself does that for its case-study corpora), but it is not a
 documented peer mode; the standard is embedded.
@@ -532,13 +488,12 @@ documented peer mode; the standard is embedded.
     AGENTS.md                  #   agent operating instructions for this directory (scaffolded)
     trestle.config.ts          #   engine config: corpus roots, storage, service/portal
     profile.ts                 #   vocabulary entrypoint (may import ./profile/*.ts fragments)
-    profile.lock.json          #   committed canonical snapshot; hash = profile revision in ledger
+    profile.lock.json          #   committed canonical snapshot; hash = profile revision
     extract/pipeline.ts        #   the extraction pipeline entrypoint (user-owned)
     resolvers/*.ts             #   resolver programs
-    units/<unitId>.md          #   migration-unit declarations
     .state/                    #   gitignored: local fact store cache, frozen artifacts, snapshots
-  .amp/plugins/                # ledger + graph tools, context injector, broadcast
-  .agents/skills/              # trestle-* skills (installed by init) + project role/unit skills
+  .amp/plugins/                # trestle.ts: graph query tools (auth, Cypher, survey/status/doctor)
+  .agents/skills/              # trestle-* skills (installed by init) + project skills
 ```
 
 **What ships with Trestle: one npm package, `trestle`.** CLI, SDK, engine,
@@ -612,20 +567,21 @@ src/
   extract/      # pipeline runner: memoized cells, corpus walking, acquire/run, fact emission
   resolve/      # resolver SDK (slice/emitter), kit (rules/mapFacts), phase-ordered runner
   survey/       # unresolved-population report over facts/nodes/edges/claims
-  cli/          # init scaffold, profile build/check, extract, resolve, survey, status
+  check/        # doctor: graph health checks (duplicates, orphans, hygiene)
+  project/      # Cypher projection (LadybugDB materializer)
+  server/       # MCP serve endpoint (graph_query, survey, status, doctor)
+  cli/          # init scaffold, profile build/check, extract, resolve, survey,
+                #   status, doctor, project, serve, skills
 ```
-
-Planned, not yet present: `project/` (clustering, scheduling DAG, materializers),
-`ledger/` (units, bindings, frontier), `server/` (MCP endpoint, portal auth).
 
 ## 8. Use-case mapping
 
 **Mainframe modernization / decommission.** Profile ≈ strangler-fig's:
 COBOL/JCL/BMS parsers, DD-name and copybook resolvers, mutable-dataset-heavy
-weight model. Trestle adds what strangler-fig stopped short of: promoting
-derived boundaries to declared units, durable unit agents doing translation
-with behavior-parity acceptance commands, and decommission tracking as a
-projection (which programs/datasets have no remaining live inbound edges).
+weight model. Trestle adds what strangler-fig stopped short of: boundary
+candidates as reviewable projections that an external orchestrator can
+promote to units of work, and decommission tracking as a projection (which
+programs/datasets have no remaining live inbound edges).
 
 **Legacy/proprietary code mapping.** The degenerate but important case:
 extraction and resolution only, orchestration optional. Tolerant island
@@ -638,10 +594,9 @@ understood map honest and incrementally improvable.
 **Java monolith modularization.** Parsers over source + bytecode + build
 files; resolvers for Spring wiring, JNDI, reflection, JPA entity→table
 mapping; weight model penalizing shared mutable entities and transaction
-boundaries; units = candidate modules with `conflicts-with` edges where
-scopes overlap; acceptance = module builds in isolation + contract tests +
-container image. Strangler routing state (what traffic has moved) is a
-projection over deployment facts.
+boundaries; boundary candidates = candidate modules with `conflicts-with`
+edges where scopes overlap. Strangler routing state (what traffic has
+moved) is a projection over deployment facts.
 
 ## 9. Decisions and rejected alternatives
 
@@ -657,27 +612,26 @@ Adopted (with source):
   rows, one nodes/edges table for all kinds); Cypher served from a
   regenerable projection behind an engine adapter — LadybugDB default,
   Neo4j alternative, Postgres+AGE at scale-out (§3.5, §7.3). Rejected:
-  graph DB as system of record — bitemporal bookkeeping, evidence joins,
-  and ledger CAS are relational-shaped, and per-kind typed tables in the
+  graph DB as system of record — bitemporal bookkeeping and evidence joins
+  are relational-shaped, and per-kind typed tables in the
   store would turn vocabulary changes into data migrations
   *(strangler-fig, strengthened)*
 - Single canonical owner per information kind; pointers not copies *(ampx)*
-- Reserve→provision→self-bind; CAS everywhere; derived frontier *(ampx)*
-- Verification-gated completion as invariant, extended with commit+revision
-  freshness *(ampx, strengthened)*
-- Trunk-based integration with unit-tagged commits *(ampx)*
+- Orchestration mechanics (unit binding, reservation, verification-gated
+  completion, trunk integration) delegated wholesale to the external
+  orchestrator rather than reimplemented *(ampx as reference consumer, §5)*
 
 Rejected:
 
 - **Closed ontology in code** — becomes profile data. The engine validates
   shape, not vocabulary.
 - **In-process parser plugin API** — process boundary is the plugin API.
-- **Workflow engine / saga orchestration** — stateless reconciliation cycles
-  over persisted facts instead; every driver cycle is reconstructible from
-  Git + ledger + thread previews + trunk.
-- **Persisting readiness, copying transcripts, proxying Amp through the
-  ledger, per-unit branches, per-unit config in the DB** — all previously
-  tried or considered in ampx and rejected; Trestle keeps those verdicts.
+- **Workflow engine / saga orchestration** — every graph state is
+  reconstructible from Git-tracked user code + the revisioned store; no
+  hidden execution state.
+- **In-kernel orchestration (units, bindings, statuses, frontier)** — a
+  full spec existed and was deliberately not implemented; it duplicated
+  ampx's canonical data. Trestle serves the graph; orchestrators own work.
 
 ## 10. Open questions
 
@@ -693,8 +647,8 @@ Rejected:
   profile check` lints the store and reports violations as data. Still open
   for the durable layers: changing a *fact kind's* schema (re-transcribe
   from artifacts, guided by per-kind `version`) and identity-rule changes
-  that shift `stable_id`s under ledger units pointing at them.
+  that shift `stable_id`s under external consumers pointing at them.
 - **Multi-repo corpora.** Mainframe estates and monolith split-targets often
   span repositories; the profile and provenance model should treat "corpus"
-  as a set of roots, but unit scope + trunk integration currently assume one
-  trunk.
+  as a set of roots, but the current implementation assumes one root
+  checkout.

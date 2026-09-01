@@ -1,7 +1,7 @@
 {
   "name": "trestle",
   "version": "0.1.0",
-  "description": "Metaharness for knowledge-graph-based automated code migration: extract facts, resolve a typed evidence graph, project boundaries, orchestrate durable agents.",
+  "description": "Knowledge graph harness for code migration: extract facts from any corpus, resolve a typed evidence graph, project boundaries, and serve it to coding agents.",
   "type": "module",
   "license": "MIT",
   "engines": {
