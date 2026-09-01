@@ -22,11 +22,10 @@ const USAGE = `trestle <command>
   survey               report the resolved/unresolved population
   status               store revision + row counts
   doctor [--strict]    mechanical graph-health checks (duplication, staleness, drift)
-  skills list          list packaged agent skills
-  skills get <name>    print a packaged skill (version-matched to this install)
   project build        materialize the Cypher projection (LadybugDB, regenerable)
   project query <q>    run a Cypher query against the projection
-  serve [--port N]     graph explorer + MCP server (POST /mcp);
+  serve [--port N] [--host H]
+                       graph explorer + MCP server (POST /mcp);
                        expose through the orb portal
 `;
 
@@ -38,7 +37,7 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
   const [command, sub] = argv;
   switch (command) {
     case "corpus": {
-      if (sub === "add") return corpusAdd(cwd, argv[2], argv[3]);
+      if (sub === "add") return corpusAdd(cwd, overrides, argv[2], argv[3]);
       throw new Error(`usage: trestle corpus add <git-url> [name]`);
     }
     case "profile": {
@@ -56,11 +55,6 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
       return status(cwd, overrides);
     case "doctor":
       return doctor(cwd, overrides, argv.includes("--strict"));
-    case "skills": {
-      if (sub === "list") return skillsList();
-      if (sub === "get") return skillsGet(argv[2]);
-      throw new Error(`usage: trestle skills list|get <name>`);
-    }
     case "project": {
       if (sub === "build") return projectBuild(cwd, overrides);
       if (sub === "query") return projectQuery(cwd, overrides, argv[2]);
@@ -78,55 +72,25 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
   }
 }
 
-/** ---------- packaged skills ---------- */
-
-const SKILLS_DIR = join(import.meta.dirname, "../../.agents/skills");
-
-interface PackagedSkill {
-  name: string;
-  description: string;
-  content: string;
-}
-
-function packagedSkills(): PackagedSkill[] {
-  if (!existsSync(SKILLS_DIR)) return [];
-  return readdirSync(SKILLS_DIR, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && existsSync(join(SKILLS_DIR, e.name, "SKILL.md")))
-    .map((e) => {
-      const content = readFileSync(join(SKILLS_DIR, e.name, "SKILL.md"), "utf8");
-      const description = /^description:\s*(.+)$/m.exec(content)?.[1]?.trim() ?? "";
-      return { name: e.name, description, content };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function skillsList(): void {
-  for (const s of packagedSkills()) console.log(`${s.name}\n    ${s.description}`);
-}
-
-function skillsGet(name: string | undefined): void {
-  const skills = packagedSkills();
-  const skill = skills.find((s) => s.name === name);
-  if (!skill) {
-    throw new Error(`unknown skill "${name ?? ""}" (available: ${skills.map((s) => s.name).join(", ")})`);
-  }
-  console.log(skill.content);
-}
-
 /** ---------- corpus ---------- */
 
-function corpusAdd(cwd: string, url: string | undefined, name: string | undefined): void {
+async function corpusAdd(cwd: string, overrides: TrestleConfig, url: string | undefined, name: string | undefined): Promise<void> {
   if (!url) throw new Error(`usage: trestle corpus add <git-url> [name]`);
   const inferred = url.replace(/\/+$/, "").split("/").pop()?.replace(/\.git$/, "");
   const corpusName = name ?? inferred;
   if (!corpusName || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(corpusName)) {
     throw new Error(`cannot infer a corpus name from "${url}"; pass one: trestle corpus add <git-url> <name>`);
   }
-  const path = join("corpora", corpusName);
-  if (existsSync(join(cwd, path))) throw new Error(`${path} already exists`);
+  // Anchor at the graph repo root, into the first configured corpus root.
+  const cfg = await loadConfig(cwd, overrides);
+  const root = cfg.dir;
+  const corpusRoot = relative(root, cfg.corpusRoots[0] ?? join(root, "corpora"));
+  if (corpusRoot.startsWith("..")) throw new Error(`corpus root ${cfg.corpusRoots[0]} is outside the repo; cannot add a submodule there`);
+  const path = join(corpusRoot, corpusName);
+  if (existsSync(join(root, path))) throw new Error(`${path} already exists`);
   // Shallow submodule: the pinned gitlink SHA is the corpus provenance.
-  execFileSync("git", ["submodule", "add", "--depth", "1", url, path], { cwd, stdio: "inherit" });
-  execFileSync("git", ["config", "-f", ".gitmodules", `submodule.${path}.shallow`, "true"], { cwd });
+  execFileSync("git", ["submodule", "add", "--depth", "1", url, path], { cwd: root, stdio: "inherit" });
+  execFileSync("git", ["config", "-f", ".gitmodules", `submodule.${path}.shallow`, "true"], { cwd: root });
   console.log(`added corpus ${path} (shallow submodule, pinned by gitlink)`);
   console.log(`next: git add .gitmodules ${path} && git commit`);
 }

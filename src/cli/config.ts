@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export interface VisualizationNodeStyle {
@@ -55,11 +55,19 @@ export interface ResolvedConfig {
 }
 
 export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Promise<ResolvedConfig> {
-  // The project root is where trestle.config.ts lives. Legacy embedded
-  // layouts (a trestle/ dir inside a host repo) still resolve.
+  // The graph repo root is wherever trestle.config.ts lives. Search upward
+  // so the CLI works from any subdirectory; stop at a git boundary so an
+  // unrelated parent project is never picked up.
   let dir = resolve(cwd);
-  if (!existsSync(join(dir, "trestle.config.ts")) && existsSync(join(dir, "trestle", "trestle.config.ts"))) {
-    dir = join(dir, "trestle");
+  for (let d = dir; ; ) {
+    if (existsSync(join(d, "trestle.config.ts"))) {
+      dir = d;
+      break;
+    }
+    if (existsSync(join(d, ".git"))) break; // repo root without a config: stay at cwd
+    const parent = dirname(d);
+    if (parent === d) break;
+    d = parent;
   }
   const configPath = join(dir, "trestle.config.ts");
   let fileConfig: TrestleConfig = {};

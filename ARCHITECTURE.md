@@ -360,7 +360,7 @@ Small, boring host:
   (`invalid_input | not_found | conflict` with reasons).
 - **CLI** exposing pipeline stages independently:
   `trestle profile | extract | resolve | survey | status | doctor |
-  project | serve | skills | corpus add`.
+  project | serve | corpus add`.
 
 ### 7.1 Deployment: one orb per project
 
@@ -527,7 +527,7 @@ published. The four surfaces are repo directories, not package exports:
 
 1. **Runtime + CLI** — `src/` + `bin/trestle.js`:
    `trestle profile build/check | extract | resolve | survey | status |
-   doctor | project | serve | skills | corpus add`.
+   doctor | project | serve | corpus add`.
 2. **SDK** — the `"trestle"` self-reference: profile builders
    (`defineProfile`, `t.*`), the five extraction primitives
    (`corpus`/`acquire`/`run`/`memo`/`emit`), the resolver SDK and kit.
@@ -538,9 +538,8 @@ published. The four surfaces are repo directories, not package exports:
 4. **Agent context** — `AGENTS.md` (the extract→resolve→survey loop,
    pointers to skills, the corpora-are-read-only rule, a Project-notes
    section), `.agents/skills/` (four semantics-first skills:
-   authoring-trestle-profiles, writing-trestle-extractors,
-   writing-trestle-resolvers, running-the-trestle-loop; also served by
-   `trestle skills list|get <name>`), and `.amp/plugins/trestle.ts`.
+   profiles, extraction, resolvers, loop — shipped as ordinary repo
+   files, discovered natively by the agent), and `.amp/plugins/trestle.ts`.
    Context is version-matched by construction: it lives in the same
    commit as the engine it describes.
 
@@ -575,7 +574,7 @@ src/
   project/      # Cypher projection (LadybugDB materializer)
   server/       # MCP serve endpoint (graph_query, survey, status, doctor)
   cli/          # profile build/check, extract, resolve, survey, status,
-                #   doctor, project, serve, skills, corpus add
+                #   doctor, project, serve, corpus add
 ```
 
 ## 8. Use-case mapping
@@ -639,10 +638,11 @@ Rejected:
 
 ## 10. Open questions
 
-- **Incremental ingest.** The mechanism is now designed (memo-cell input
+- **Incremental ingest.** The mechanism is implemented (memo-cell input
   fingerprints → surgical fact retirement; owner-scoped directive
-  retirement; delta-driven re-resolution per §2.3 of EXTRACT-RESOLVE), but
-  it is unproven at scale — the prototype rebuilds from scratch.
+  retirement; delta-driven re-resolution per §2.3 of EXTRACT-RESOLVE) and
+  held up on the OFBiz dogfood (~42k facts), but larger estates are
+  unproven.
 - **Evidence freshness granularity.** Commit + graph revision on verification
   pointers is coarse; tying invalidation to the unit's declared scope paths is
   the pragmatic middle ground, but scope drift makes it imperfect.

@@ -1,5 +1,5 @@
 ---
-name: authoring-trestle-profiles
+name: profiles
 description: Declares a Trestle profile — the node, edge, and fact vocabulary for a migration knowledge graph. Use when creating or editing profile.ts, choosing identities, adding kinds, or running trestle profile build/check.
 ---
 

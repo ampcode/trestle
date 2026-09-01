@@ -1,5 +1,5 @@
 ---
-name: writing-trestle-resolvers
+name: resolvers
 description: Writes Trestle resolvers that turn extracted facts into graph nodes, edges, aliases, and claims with evidence. Use when creating or editing resolvers/*.ts, mapping facts to entities, joining facts across files, or handling unresolved references.
 ---
 

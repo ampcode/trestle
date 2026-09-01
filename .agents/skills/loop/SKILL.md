@@ -1,5 +1,5 @@
 ---
-name: running-the-trestle-loop
+name: loop
 description: Runs and interprets the Trestle extract → resolve → survey loop on a migration project. Use when deciding what to work on next, reading survey output, diagnosing stub nodes or open claims, or checking store status.
 ---
 
@@ -57,7 +57,7 @@ The survey is a to-do list, not a report card. It shows:
 - Claim cluster of one kind → add the join rule or fact kind it is waiting
   on.
 - Expected fact kind missing → pipeline gap: add transcription for that
-  artifact type (see writing-trestle-extractors).
+  artifact type (see the extraction skill).
 - Vocabulary missing (a real-world concept has no kind) → edit profile.ts,
   `trestle profile build`, then extract/resolve.
 

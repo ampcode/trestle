@@ -38,7 +38,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 
 ## Quickstart
 
-Requires Node ≥ 24 (native TypeScript type stripping and `node:sqlite`).
+Requires Node ≥ 23.6 (native TypeScript type stripping and `node:sqlite`).
 
 **This repository IS the graph repo.** There is no separate install, no npm
 registry, and no `trestle init`: fork (or clone) this repo, add the code
@@ -105,8 +105,7 @@ live beside the engine (`src/`) and rarely conflict.
 The loop is: edit `profile.ts` / `extract/pipeline.ts` / `resolvers/*.ts`,
 re-run `extract` + `resolve` (both incremental and idempotent), read `survey`,
 repeat. The committed `AGENTS.md` teaches this loop to coding agents, the
-version-matched skills live in `.agents/skills/` (also served by
-`trestle skills list|get <name>`), and the committed
+version-matched skills live in `.agents/skills/`, and the committed
 `.amp/plugins/trestle.ts` Amp plugin — `trestle_auth` / `trestle_query` /
 `trestle_call` — lets threads query a graph portal directly.
 

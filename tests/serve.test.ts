@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { runCli } from "../src/cli/main.ts";
 import { startServer, type RunningServer } from "../src/server/serve.ts";
 
-const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini", "trestle");
+const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini");
 let stateDir: string;
 let running: RunningServer;
 

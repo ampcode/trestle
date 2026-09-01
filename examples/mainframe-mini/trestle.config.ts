@@ -1,5 +1,5 @@
 import type { TrestleConfig } from "trestle";
 
 export default {
-  corpusRoots: ["../corpus"],
+  corpusRoots: ["corpus"],
 } satisfies TrestleConfig;

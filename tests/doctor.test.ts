@@ -14,7 +14,7 @@ import { runDoctor } from "../src/check/doctor.ts";
 import { profileFromLock, type ProfileLock } from "../src/profile/define.ts";
 import { readFileSync } from "node:fs";
 
-const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini", "trestle");
+const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini");
 let stateDir: string;
 
 before(async () => {

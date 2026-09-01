@@ -1,6 +1,4 @@
 node_modules/
 *.tsbuildinfo
 .state/
-examples/**/.state/
-prototype/out/
 .amp/portals/

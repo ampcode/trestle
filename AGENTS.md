@@ -37,10 +37,10 @@ repo is the application.
 
 Before editing each surface, load its skill from `.agents/skills/`:
 
-- profile.ts → authoring-trestle-profiles
-- extract/pipeline.ts → writing-trestle-extractors
-- resolvers/*.ts → writing-trestle-resolvers
-- deciding what to do next → running-the-trestle-loop
+- profile.ts → profiles
+- extract/pipeline.ts, choosing parsers/indexers → extraction
+- resolvers/*.ts → resolvers
+- deciding what to do next → loop
 
 ## Upgrading the engine
 

@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { runCli } from "../src/cli/main.ts";
 import { Store } from "../src/store/store.ts";
 
-const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini", "trestle");
+const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini");
 let stateDir: string;
 const overrides = () => ({ state: stateDir });
 
