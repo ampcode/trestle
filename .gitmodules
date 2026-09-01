@@ -1,8 +1,0 @@
-[submodule "corpora/ofbiz-framework"]
-	path = corpora/ofbiz-framework
-	url = https://github.com/apache/ofbiz-framework.git
-	shallow = true
-[submodule "corpora/wireshark"]
-	path = corpora/wireshark
-	url = https://github.com/wireshark/wireshark.git
-	shallow = true
