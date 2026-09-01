@@ -81,6 +81,16 @@ export const TEMPLATES: Record<string, string> = {
 export default {
   // The corpus defaults to the enclosing repo (embedded mode).
   corpusRoots: [".."],
+
+  // Presentation is code-reviewed with the rest of the harness. Unspecified
+  // kinds receive stable colors and labels derived from their identity.
+  visualization: {
+    title: "Trestle knowledge graph",
+    nodes: {
+      File: { label: "path", color: "#8b7cf6" },
+    },
+    edges: {},
+  },
 } satisfies TrestleConfig;
 `,
 
@@ -176,6 +186,9 @@ This directory is the Trestle harness for this repository: profile
   read artifacts. Every edge carries evidence; every unmatched reference
   becomes a claim or an explicit ignore.
 - Facts persist: iterate on resolvers without re-extracting.
+- Visualization styling lives in trestle.config.ts. The Amp portal service
+  reads the live SQLite graph; it does not require \`trestle project build\`.
+  After changing presentation config, run \`amp orb service restart trestle\`.
 
 ## Skills
 
@@ -196,3 +209,20 @@ into \`.agents/skills/\`; each ends with project addenda you can extend):
 node_modules/
 `,
 };
+
+/** Host-repository files, written one level above the embedded harness. */
+export function ampServiceTemplate(harnessDir: string): string {
+  return `services:
+  trestle:
+    cwd: ${harnessDir}
+    command: npx --no-install trestle serve --host 0.0.0.0 --port "$PORT"
+    health: /health
+    portal:
+      title: Trestle Graph
+      description: Explore the live Trestle knowledge graph.
+    agent: control
+`;
+}
+
+export const AMP_GITIGNORE_TEMPLATE = `portals/
+`;

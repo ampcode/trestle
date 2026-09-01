@@ -35,6 +35,12 @@ test("init copies full packaged skills to the host", async () => {
   const host = mkdtempSync(join(tmpdir(), "trestle-init-"));
   try {
     await runCli(["init"], host);
+    const services = join(host, ".amp", "services.yaml");
+    assert.ok(existsSync(services), "missing Amp service declaration");
+    assert.match(readFileSync(services, "utf8"), /cwd: trestle/);
+    assert.match(readFileSync(services, "utf8"), /npx --no-install trestle serve --host 0\.0\.0\.0 --port "\$PORT"/);
+    assert.equal(readFileSync(join(host, ".amp", ".gitignore"), "utf8"), "portals/\n");
+    assert.match(readFileSync(join(host, "trestle", "trestle.config.ts"), "utf8"), /visualization:/);
     for (const dir of readdirSync(SKILLS_DIR)) {
       const installed = join(host, ".agents", "skills", dir, "SKILL.md");
       assert.ok(existsSync(installed), `missing skill ${dir}`);
@@ -62,9 +68,11 @@ test("init copies full packaged skills to the host", async () => {
     const marker = join(host, ".agents", "skills", readdirSync(SKILLS_DIR)[0]!, "SKILL.md");
     writeFileSync(marker, "EDITED\n");
     writeFileSync(plugin, "EDITED\n");
+    writeFileSync(services, "services:\n  app:\n    command: npm start\n");
     await runCli(["init"], host);
     assert.equal(readFileSync(marker, "utf8"), "EDITED\n");
     assert.equal(readFileSync(plugin, "utf8"), "EDITED\n");
+    assert.equal(readFileSync(services, "utf8"), "services:\n  app:\n    command: npm start\n");
   } finally {
     rmSync(host, { recursive: true, force: true });
   }

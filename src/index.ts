@@ -40,5 +40,10 @@ export type { ProjectionResult } from "./project/ladybug.ts";
 export { computeSurvey, renderSurvey } from "./survey/survey.ts";
 export type { Survey } from "./survey/survey.ts";
 
-export type { TrestleConfig } from "./cli/config.ts";
+export type {
+  TrestleConfig,
+  VisualizationConfig,
+  VisualizationNodeStyle,
+  VisualizationEdgeStyle,
+} from "./cli/config.ts";
 export { runCli } from "./cli/main.ts";

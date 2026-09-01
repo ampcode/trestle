@@ -18,9 +18,9 @@ graph construction plugs into:
   programs, and Amp skills through which users encode project-specific
   knowledge.
 
-Each project runs in its own orb as a supervised service, exposing an **MCP
-endpoint through the orb portal** so any other Amp thread can attach it as a
-remote MCP server and query the knowledge graph.
+Each project runs in its own orb as a supervised service, exposing
+an interactive **GPU-rendered graph explorer** and an **MCP endpoint through
+the orb portal** so humans and agents can inspect the same live graph.
 
 **Orchestration is deliberately out of scope.** Trestle constructs and serves
 the graph; deciding what to migrate, binding work to agent threads, and
@@ -39,13 +39,12 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 ## Quickstart
 
 Requires Node ≥ 24 (native TypeScript type stripping and `node:sqlite`).
-Trestle has zero runtime dependencies.
 
 ```sh
 # Distributed through the Amp-hosted git remote (uses your Amp git
 # credentials; no npm registry needed). #semver: resolves pushed v* tags.
 npm install "git+https://ampcode.com/@jesse/trestle#semver:^0.1.0"
-npx trestle init             # scaffolds trestle/ (config, profile, extract, resolvers)
+npx trestle init             # scaffolds trestle/ and .amp/services.yaml
 cd trestle
 npx trestle profile build    # compile profile.ts -> profile.lock.json
 npx trestle extract          # run extraction pipeline -> facts
@@ -54,14 +53,33 @@ npx trestle survey           # what is still unresolved; what to work on next
 npx trestle doctor           # mechanical graph-health checks (duplication, staleness, drift)
 npx trestle project build    # materialize the Cypher projection (needs @ladybugdb/core)
 npx trestle project query 'MATCH (a)-[r]->(b) RETURN a, r, b LIMIT 10'
-npx trestle serve         # MCP server (graph_query, survey, status, doctor) for other threads
+npx trestle serve            # graph explorer at /; MCP endpoint at /mcp
 ```
 
-`trestle serve` is the factory's query endpoint: run it as a supervised
-service in the project orb (`amp orb service start trestle-mcp --command
-'npx trestle serve' --portal`) and any Amp thread can attach the portal URL
-as a remote MCP server — or POST JSON-RPC directly — to query the knowledge
-graph without entering the orb.
+`trestle init` declares the server in `.amp/services.yaml`. Opening the Amp
+Portal tab starts it on demand, or run `amp orb services ensure`. The explorer
+reads the authoritative SQLite graph directly, so it reflects the next
+`extract` / `resolve` run after a browser refresh and does not require a
+LadybugDB projection. Other Amp threads can attach `<portal-url>/mcp` as a
+remote MCP server.
+
+Visualization presentation is Git-tracked TypeScript in
+`trestle/trestle.config.ts`:
+
+```ts
+export default {
+  corpusRoots: [".."],
+  visualization: {
+    title: "Migration knowledge graph",
+    nodes: { Program: { label: "name", color: "#9b87f5" } },
+    edges: { CALLS: { color: "#42b7ff", width: 1.25 } },
+  },
+} satisfies TrestleConfig;
+```
+
+Unconfigured kinds get deterministic colors and identity-derived labels.
+Restart the declared service after editing presentation config with
+`amp orb service restart trestle`; graph data itself updates on browser refresh.
 
 ### Installing from a Git clone
 

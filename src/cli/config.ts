@@ -2,6 +2,32 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+export interface VisualizationNodeStyle {
+  /** Identity or property field used as the node label. Defaults to the identity tuple. */
+  label?: string;
+  /** CSS hex color. Defaults to a stable color derived from the node kind. */
+  color?: string;
+  /** Relative rendered size. Default: 1. */
+  size?: number;
+  /** Hide this kind when the visualization first opens. */
+  hidden?: boolean;
+}
+
+export interface VisualizationEdgeStyle {
+  /** CSS hex color. Defaults to a stable color derived from the edge kind. */
+  color?: string;
+  /** Relative rendered width. Default: 1. */
+  width?: number;
+  /** Hide this kind when the visualization first opens. */
+  hidden?: boolean;
+}
+
+export interface VisualizationConfig {
+  title?: string;
+  nodes?: Record<string, VisualizationNodeStyle>;
+  edges?: Record<string, VisualizationEdgeStyle>;
+}
+
 export interface TrestleConfig {
   /** Corpus roots, relative to the config file's directory. Default: [".."]. */
   corpusRoots?: string[];
@@ -11,6 +37,8 @@ export interface TrestleConfig {
   profileLock?: string; // default "./profile.lock.json"
   pipeline?: string; // default "./extract/pipeline.ts"
   resolvers?: string; // default "./resolvers"
+  /** Browser graph presentation. Data always comes from the live SQLite store. */
+  visualization?: VisualizationConfig;
 }
 
 export interface ResolvedConfig {
@@ -23,6 +51,7 @@ export interface ResolvedConfig {
   lockPath: string;
   pipelinePath: string;
   resolversDir: string;
+  visualization: VisualizationConfig;
 }
 
 export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Promise<ResolvedConfig> {
@@ -50,5 +79,6 @@ export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Pr
     lockPath: rel(cfg.profileLock ?? "./profile.lock.json"),
     pipelinePath: rel(cfg.pipeline ?? "./extract/pipeline.ts"),
     resolversDir: rel(cfg.resolvers ?? "./resolvers"),
+    visualization: cfg.visualization ?? {},
   };
 }

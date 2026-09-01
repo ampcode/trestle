@@ -9,7 +9,7 @@ import { runExtraction } from "../extract/run.ts";
 import { loadResolvers, runResolvers } from "../resolve/run.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import { loadConfig, type TrestleConfig } from "./config.ts";
-import { harnessPackageJson, setupScript, TEMPLATES } from "./templates.ts";
+import { AMP_GITIGNORE_TEMPLATE, ampServiceTemplate, harnessPackageJson, setupScript, TEMPLATES } from "./templates.ts";
 
 const USAGE = `trestle <command>
 
@@ -25,8 +25,8 @@ const USAGE = `trestle <command>
   skills get <name>    print a packaged skill (version-matched to this install)
   project build        materialize the Cypher projection (LadybugDB, regenerable)
   project query <q>    run a Cypher query against the projection
-  serve [--port N]     MCP server over HTTP (graph_query, survey, status, doctor);
-                       expose through the orb portal for other threads
+  serve [--port N]     graph explorer + MCP server (POST /mcp);
+                       expose through the orb portal
 `;
 
 export async function runCli(argv: string[], cwd: string, overrides: TrestleConfig = {}): Promise<void> {
@@ -163,6 +163,12 @@ function init(cwd: string): void {
   if (existsSync(packagedPlugin)) {
     scaffoldFile(join("..", ".amp", "plugins", "trestle.ts"), readFileSync(packagedPlugin, "utf8"));
   }
+  const serviceRel = join("..", ".amp", "services.yaml");
+  const servicePath = join(target, serviceRel);
+  const existingServices = existsSync(servicePath) ? readFileSync(servicePath, "utf8") : null;
+  const serviceTemplate = ampServiceTemplate(harnessDir);
+  scaffoldFile(serviceRel, serviceTemplate);
+  scaffoldFile(join("..", ".amp", ".gitignore"), AMP_GITIGNORE_TEMPLATE);
   writeFileSync(join(target, ".scaffold.json"), JSON.stringify(manifest, null, 2) + "\n");
   if (written.length === 0) {
     console.log(`nothing to do: all scaffold files already exist in ${target}`);
@@ -170,6 +176,10 @@ function init(cwd: string): void {
     console.log(`scaffolded ${relative(cwd, target) || "."}:`);
     for (const f of written) console.log(`  ${f}`);
     console.log(`\nnext: cd ${relative(cwd, target) || "."} && npm install && npx trestle profile build && npx trestle extract && npx trestle resolve && npx trestle survey`);
+  }
+  if (existingServices !== null && !/^\s+trestle:\s*$/m.test(existingServices)) {
+    console.log(`\nkept existing .amp/services.yaml; add this service to its services mapping:\n`);
+    console.log(serviceTemplate.replace(/^services:\n/, ""));
   }
 }
 
@@ -321,7 +331,6 @@ async function projectQuery(cwd: string, overrides: TrestleConfig, cypher: strin
 async function serve(cwd: string, overrides: TrestleConfig, args: string[]): Promise<void> {
   const { startServer, TOOLS } = await import("../server/serve.ts");
   const cfg = await loadConfig(cwd, overrides);
-  if (!existsSync(cfg.lockPath)) throw new Error(`no profile lock at ${cfg.lockPath}; run \`trestle profile build\` first`);
   let port = 7331;
   let host = "127.0.0.1";
   for (let i = 0; i < args.length; i++) {
@@ -330,10 +339,10 @@ async function serve(cwd: string, overrides: TrestleConfig, args: string[]): Pro
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`invalid --port`);
   const running = await startServer(
-    { dbPath: cfg.dbPath, projectionPath: cfg.projectionPath, lockPath: cfg.lockPath },
+    { dbPath: cfg.dbPath, projectionPath: cfg.projectionPath, lockPath: cfg.lockPath, visualization: cfg.visualization },
     { port, host },
   );
-  console.log(`trestle MCP server on http://${host}:${running.port} (POST JSON-RPC; GET /health)`);
+  console.log(`trestle graph server on http://${host}:${running.port} (visualization /; MCP POST /mcp)`);
   console.log(`  tools: ${TOOLS.map((t) => t.name).join(", ")}`);
   console.log(`  expose it: amp orb portal ${running.port}`);
   // Run until terminated; the supervisor (amp orb service) owns the lifecycle.
