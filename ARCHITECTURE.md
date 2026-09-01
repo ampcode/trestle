@@ -493,6 +493,7 @@ documented peer mode; the standard is embedded.
     resolvers/*.ts             #   resolver programs
     .state/                    #   gitignored: local fact store cache, frozen artifacts, snapshots
   .amp/plugins/                # trestle.ts: graph query tools (auth, Cypher, survey/status/doctor)
+  .agents/setup                # environment bootstrap: Node >= 23.6 check + npm install in trestle/
   .agents/skills/              # trestle-* skills (installed by init) + project skills
 ```
 
@@ -535,11 +536,19 @@ project:
   small running examples (a file-inventory fact emitter, a P0 mapping
   resolver, a P1 join resolver with a claim path) — meant to be edited into
   the real pipeline; the type-checker catches upgrade breaks.
-- *Thin stubs*: `trestle/AGENTS.md` (the extract→resolve→survey loop,
-  pointers to packaged skills, a Project-notes section) and
-  `.agents/skills/<skill-name>/SKILL.md` stubs (one per packaged skill,
-  same names) that point at the version-matched packaged content and
-  carry project addenda.
+- *Agent context*: `trestle/AGENTS.md` (the extract→resolve→survey loop,
+  pointers to installed skills, a Project-notes section) and
+  `.agents/skills/<skill-name>/SKILL.md` (one per packaged skill, full
+  content copied so no `node_modules` is needed to read them, each ending
+  with a project-addenda section the user extends).
+- *Environment bootstrap*: `trestle/package.json` (pins the engine version
+  so a fresh clone can `npm install` without trestle preinstalled),
+  `trestle/tsconfig.json`, and host-level `.agents/setup` (Node ≥ 23.6
+  check + harness install). Orbs run `.agents/setup` once in a fresh
+  sandbox and snapshot the result; a stale snapshot re-runs it on a warm
+  filesystem, so the script is idempotent and fast when `node_modules`
+  already exists. If `.agents/setup` already exists, init leaves it alone
+  and prints the line to add.
 - *Ownership rule*: `init` never overwrites an existing file (re-running
   fills gaps only); `trestle upgrade` re-renders only never-modified files
   (tracked by content hash in `trestle/.scaffold.json`) and prints diffs

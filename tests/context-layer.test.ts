@@ -5,7 +5,7 @@
  */
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "../src/cli/main.ts";
@@ -31,18 +31,28 @@ test("packaged skills are well-formed", () => {
   }
 });
 
-test("init scaffolds host-level skill stubs", async () => {
+test("init copies full packaged skills to the host", async () => {
   const host = mkdtempSync(join(tmpdir(), "trestle-init-"));
   try {
     await runCli(["init"], host);
     for (const dir of readdirSync(SKILLS_DIR)) {
-      const stub = join(host, ".agents", "skills", dir, "SKILL.md");
-      assert.ok(existsSync(stub), `missing stub ${dir}`);
-      const content = readFileSync(stub, "utf8");
-      assert.match(content, new RegExp(`name: ${dir}`));
+      const installed = join(host, ".agents", "skills", dir, "SKILL.md");
+      assert.ok(existsSync(installed), `missing skill ${dir}`);
+      const content = readFileSync(installed, "utf8");
+      const packagedSkill = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf8");
+      assert.ok(content.startsWith(packagedSkill.trimEnd()), `${dir}: not the full packaged content`);
       assert.match(content, /Project addenda/);
-      assert.match(content, new RegExp(`node_modules/trestle/skills/${dir}/SKILL.md`));
     }
+    // Harness manifest pins the installed engine version; tsconfig ships too.
+    const manifest = JSON.parse(readFileSync(join(host, "trestle", "package.json"), "utf8"));
+    const ownVersion = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")).version;
+    assert.equal(manifest.dependencies.trestle, `git+https://ampcode.com/@jesse/trestle#semver:^${ownVersion}`);
+    assert.ok(existsSync(join(host, "trestle", "tsconfig.json")), "missing tsconfig.json");
+    // Environment bootstrap: executable, targets the harness dir.
+    const setup = join(host, ".agents", "setup");
+    assert.ok(existsSync(setup), "missing .agents/setup");
+    assert.ok(statSync(setup).mode & 0o100, ".agents/setup not executable");
+    assert.match(readFileSync(setup, "utf8"), /cd trestle && npm install/);
     // Amp plugin is scaffolded verbatim from the packaged copy.
     const plugin = join(host, ".amp", "plugins", "trestle.ts");
     assert.ok(existsSync(plugin), "missing .amp/plugins/trestle.ts");

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildLock, profileFromLock, type Profile, type ProfileLock } from "../profile/define.ts";
@@ -9,7 +9,7 @@ import { runExtraction } from "../extract/run.ts";
 import { loadResolvers, runResolvers } from "../resolve/run.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import { loadConfig, type TrestleConfig } from "./config.ts";
-import { TEMPLATES } from "./templates.ts";
+import { harnessPackageJson, setupScript, TEMPLATES } from "./templates.ts";
 
 const USAGE = `trestle <command>
 
@@ -112,17 +112,8 @@ function skillsGet(name: string | undefined): void {
 
 /** ---------- init ---------- */
 
-function skillStub(s: PackagedSkill): string {
-  return `---
-name: ${s.name}
-description: ${s.description}
----
-
-# ${s.name}
-
-Read the full, version-matched instructions from the installed trestle
-package before doing this work: \`node_modules/trestle/skills/${s.name}/SKILL.md\`
-(or run \`npx trestle skills get ${s.name}\`).
+function skillFile(s: PackagedSkill): string {
+  return `${s.content.trimEnd()}
 
 ## Project addenda
 
@@ -137,19 +128,34 @@ function init(cwd: string): void {
     ? JSON.parse(readFileSync(join(target, ".scaffold.json"), "utf8"))
     : {};
   const written: string[] = [];
-  const scaffoldFile = (rel: string, content: string): void => {
+  const scaffoldFile = (rel: string, content: string, mode?: number): void => {
     const path = join(target, rel);
     if (existsSync(path)) return; // never overwrite
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content);
+    if (mode !== undefined) chmodSync(path, mode);
     manifest[rel] = sha256(content);
     written.push(rel);
   };
   for (const [rel, content] of Object.entries(TEMPLATES)) scaffoldFile(rel, content);
-  // Host-level skill stubs: point at the packaged, version-matched skills
-  // and carry project addenda. Host root is the scaffold dir's parent.
+  // Harness manifest, pinned to the installed engine version, so a fresh
+  // clone can `npm install` inside trestle/ without trestle preinstalled.
+  const ownVersion = JSON.parse(readFileSync(join(import.meta.dirname, "../../package.json"), "utf8")).version as string;
+  scaffoldFile("package.json", harnessPackageJson(ownVersion));
+  // Host-level environment bootstrap: fresh orbs run .agents/setup once,
+  // then snapshot the result; stale snapshots re-run it on a warm fs.
+  const harnessDir = relative(join(target, ".."), target) || ".";
+  const setupPath = join(target, "..", ".agents", "setup");
+  const hadSetup = existsSync(setupPath);
+  scaffoldFile(join("..", ".agents", "setup"), setupScript(harnessDir), 0o755);
+  if (hadSetup && !readFileSync(setupPath, "utf8").includes("trestle")) {
+    console.log(`note: .agents/setup already exists; add to it:\n  (cd ${harnessDir} && npm install)`);
+  }
+  // Host-level skills: full packaged content, copied so agents need no
+  // node_modules to read them. Never overwritten once edited; the
+  // .scaffold.json hash lets an upgrade refresh pristine copies.
   for (const s of packagedSkills()) {
-    scaffoldFile(join("..", ".agents", "skills", s.name, "SKILL.md"), skillStub(s));
+    scaffoldFile(join("..", ".agents", "skills", s.name, "SKILL.md"), skillFile(s));
   }
   // Host-level Amp plugin: trestle_auth/trestle_query/trestle_call, so any
   // thread in the host repo can query this (or a remote) graph portal.
@@ -163,7 +169,7 @@ function init(cwd: string): void {
   } else {
     console.log(`scaffolded ${relative(cwd, target) || "."}:`);
     for (const f of written) console.log(`  ${f}`);
-    console.log(`\nnext: cd ${relative(cwd, target) || "."} && trestle profile build && trestle extract && trestle resolve && trestle survey`);
+    console.log(`\nnext: cd ${relative(cwd, target) || "."} && npm install && npx trestle profile build && npx trestle extract && npx trestle resolve && npx trestle survey`);
   }
 }
 

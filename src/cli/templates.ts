@@ -5,7 +5,77 @@
  * tell never-modified files from user-edited ones.
  */
 
+/**
+ * The harness manifest. Rendered with the installed trestle version so a
+ * fresh clone can \`npm install\` inside trestle/ and get the same engine.
+ * Trestle is distributed through its Amp-hosted git remote: npm resolves
+ * \`#semver:\` ranges against pushed v* tags using the installer's Amp git
+ * credentials, so no npm registry is needed.
+ */
+export const TRESTLE_GIT_URL = "git+https://ampcode.com/@jesse/trestle";
+
+export function harnessPackageJson(version: string): string {
+  return `${JSON.stringify(
+    {
+      name: "trestle-harness",
+      private: true,
+      type: "module",
+      engines: { node: ">=23.6" },
+      dependencies: { trestle: `${TRESTLE_GIT_URL}#semver:^${version}` },
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+/**
+ * Host-level environment bootstrap, scaffolded to <host>/.agents/setup.
+ * Runs once in a fresh orb; its result is captured in the project snapshot,
+ * so it must be idempotent and fast on a warm filesystem (a stale snapshot
+ * re-runs it with node_modules already present).
+ */
+export function setupScript(harnessDir: string): string {
+  return `#!/usr/bin/env bash
+# Environment bootstrap for the Trestle harness (scaffolded by \`trestle init\`).
+# Idempotent: safe to re-run on a warm filesystem or stale snapshot.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# Trestle runs TypeScript natively and needs Node >= 23.6.
+if ! command -v node >/dev/null 2>&1; then
+  echo ".agents/setup: node not found; install Node >= 23.6" >&2
+  exit 1
+fi
+if ! node -e 'const [M,m]=process.versions.node.split(".").map(Number);process.exit(M>23||(M===23&&m>=6)?0:1)'; then
+  echo ".agents/setup: node $(node -v) is too old for trestle (need >= 23.6)" >&2
+  exit 1
+fi
+
+echo ".agents/setup: installing trestle harness dependencies"
+(cd ${harnessDir} && npm install)
+`;
+}
+
 export const TEMPLATES: Record<string, string> = {
+  "tsconfig.json": `{
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
+  },
+  "include": ["."]
+}
+`,
+
   "trestle.config.ts": `import type { TrestleConfig } from "trestle";
 
 export default {
@@ -109,8 +179,8 @@ This directory is the Trestle harness for this repository: profile
 
 ## Skills
 
-Before editing each surface, load its skill (version-matched stubs are in
-\`.agents/skills/\`; full content ships in the trestle package):
+Before editing each surface, load its skill (installed by \`trestle init\`
+into \`.agents/skills/\`; each ends with project addenda you can extend):
 
 - profile.ts → authoring-trestle-profiles
 - extract/pipeline.ts → writing-trestle-extractors

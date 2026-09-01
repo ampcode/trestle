@@ -42,7 +42,9 @@ Requires Node ≥ 24 (native TypeScript type stripping and `node:sqlite`).
 Trestle has zero runtime dependencies.
 
 ```sh
-npm install trestle          # in your host repo
+# Distributed through the Amp-hosted git remote (uses your Amp git
+# credentials; no npm registry needed). #semver: resolves pushed v* tags.
+npm install "git+https://ampcode.com/@jesse/trestle#semver:^0.1.0"
 npx trestle init             # scaffolds trestle/ (config, profile, extract, resolvers)
 cd trestle
 npx trestle profile build    # compile profile.ts -> profile.lock.json
@@ -79,7 +81,7 @@ The loop is: edit `profile.ts` / `extract/pipeline.ts` / `resolvers/*.ts`,
 re-run `extract` + `resolve` (both incremental and idempotent), read `survey`,
 repeat. `AGENTS.md` in the scaffold teaches this loop to coding agents, and
 `trestle skills list|get <name>` serves the packaged, version-matched agent
-skills (init also writes `.agents/skills/` stubs pointing at them, plus an
+skills (init copies them in full into `.agents/skills/`, plus an
 `.amp/plugins/trestle.ts` Amp plugin — `trestle_auth` / `trestle_query` /
 `trestle_call` — so threads in the host repo can query a graph portal
 directly).
