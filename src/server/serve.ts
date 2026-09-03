@@ -247,6 +247,11 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
+/** Client-safe error text: the message only, never a stringified exception or stack. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "unknown error";
+}
+
 /** ---------- JSON-RPC dispatch ---------- */
 
 async function handleMessage(cfg: ServeConfig, msg: JsonRpcMessage): Promise<JsonRpcResponse | null> {
@@ -283,8 +288,7 @@ async function handleMessage(cfg: ServeConfig, msg: JsonRpcMessage): Promise<Jso
         return reply({ content: [{ type: "text", text }], isError: false });
       } catch (err) {
         // Tool-level failures are in-band results per the MCP spec.
-        const text = err instanceof Error ? err.message : String(err);
-        return reply({ content: [{ type: "text", text }], isError: true });
+        return reply({ content: [{ type: "text", text: errorMessage(err) }], isError: true });
       }
     }
     default:
@@ -398,7 +402,7 @@ export function startServer(cfg: ServeConfig, opts: { port: number; host?: strin
         sendJson(res, 400, {
           jsonrpc: "2.0",
           id: null,
-          error: { code: -32700, message: err instanceof Error ? err.message : "parse error" },
+          error: { code: -32700, message: errorMessage(err) },
         });
         return;
       }
@@ -414,7 +418,7 @@ export function startServer(cfg: ServeConfig, opts: { port: number; host?: strin
         sendJson(res, 200, Array.isArray(parsed) ? responses : responses[0]);
       }
     } catch (err) {
-      sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+      sendJson(res, 500, { error: errorMessage(err) });
     }
   });
   return new Promise((resolve, reject) => {
