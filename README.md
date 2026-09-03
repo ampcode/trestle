@@ -6,11 +6,10 @@ can query while planning and executing a migration.
 
 The context in this codebase helps you and your agent define the vocabulary for your knowledge graph schema (‘profiles.ts’). It then helps you select the proper AST producer or language specific parser (’extract/pipeline.ts’) to extract the raw facts. Finally in (‘resolvers/*.ts’) you define the mappings between raw facts and your vocabulary to construct the graph.
 
-```
-corpora/*  ──extract──▶  facts  ──resolve──▶  nodes · edges · evidence · claims
-                                                    │
-                                          survey · doctor · project · serve
-```
+![Trestle graph explorer showing the Apache OFBiz order component and its dependencies](./docs/assets/ofbiz-knowledge-graph.png)
+
+<sub>A 40-node view centered on `order` from an Apache OFBiz dogfood graph
+with 10,646 nodes and 34,916 evidence-backed edges.</sub>
 
 - **Evidence on every edge.** Each edge cites the facts (file + location)
   that justify it and the rule that produced it.
