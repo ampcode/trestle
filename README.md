@@ -250,4 +250,4 @@ long-running agent migrations that consumes the graph read-only.
 
 ## License
 
-MIT
+[Apache-2.0](./LICENSE)

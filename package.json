@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Knowledge graph harness for code migration: fork this repo, pin your estates as submodules under corpora/, extract facts, resolve a typed evidence graph, and serve it to coding agents.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "private": true,
   "engines": {
     "node": ">=23.6"
