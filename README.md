@@ -4,12 +4,7 @@
 estate into a typed, evidence-backed graph that coding agents and humans
 can query while planning and executing a migration.
 
-You declare the vocabulary (`profile.ts`), transcribe what the source code
-literally says (`extract/pipeline.ts`), and infer the graph from those facts
-(`resolvers/*.ts`). Trestle keeps the facts, the graph, the evidence for
-every edge, and an explicit list of what it could *not* resolve. It does not
-rewrite code and it does not orchestrate work — it is the map, not the
-crew.
+The context in this codebase helps you and your agent define the vocabulary for your knowledge graph schema (‘profiles.ts’). It then helps you select the proper AST producer or language specific parser (’extract/pipeline.ts’) to extract the raw facts. Finally in (‘resolvers/*.ts’) you define the mappings between raw facts and your vocabulary to construct the graph.
 
 ```
 corpora/*  ──extract──▶  facts  ──resolve──▶  nodes · edges · evidence · claims
@@ -18,20 +13,8 @@ corpora/*  ──extract──▶  facts  ──resolve──▶  nodes · edges
 ```
 
 - **Evidence on every edge.** Each edge cites the facts (file + location)
-  that justify it, the rule that produced it, and a confidence.
-- **Claims, not guesses.** Unmatched references (dynamic dispatch,
-  unresolved copybooks, ambiguous includes) become claims for a human or
-  agent to settle.
-- **Incremental and idempotent.** Facts persist; re-running `extract` skips
-  unchanged inputs, re-running `resolve` reports `live graph unchanged`.
-- **Agent-native.** The repo ships `AGENTS.md` and skills that teach a coding
-  agent to survey a corpus, choose parsers, write resolvers, and read the
-  survey — unaided.
-
-Trestle has been run against COBOL/JCL/CICS (AWS CardDemo, IBM CBSA), a
-Java monolith (Apache OFBiz), a .NET WebForms CMS (mojoPortal), and a
-5.3M-line C++ estate (OpenOffice.org 1.0). See
-[case-studies.md](./docs/case-studies.md).
+  that justify it and the rule that produced it.
+- **Designed for Agents.** The repo ships `AGENTS.md` and skills that make setup super easy. Just ask the agent what to do next and it will walk you through the steps to bootstrap a graph.
 
 ## Requirements
 
@@ -39,32 +22,6 @@ Java monolith (Apache OFBiz), a .NET WebForms CMS (mojoPortal), and a
 - Git
 - Optional: [`@ladybugdb/core`](https://www.npmjs.com/package/@ladybugdb/core)
   for the Cypher projection (`project build`/`project query`)
-
-## Quick start
-
-This repository *is* the graph repo. Fork it, pin the code you are analyzing
-as read-only submodules under `corpora/`, and edit the user surface at the
-root. There is no installer and no `init`.
-
-```sh
-git clone <your-fork> my-graph && cd my-graph
-./.agents/setup                                  # checks Node, inits submodules, npm install
-
-npx trestle corpus add https://github.com/apache/ofbiz-framework
-                                                 # shallow submodule under corpora/
-npx trestle profile build                        # profile.ts -> profile.lock.json
-npx trestle extract                              # pipeline -> facts
-npx trestle resolve                              # resolvers -> graph
-npx trestle survey                               # what is unresolved, ranked
-npx trestle doctor                               # graph health checks
-
-npx trestle project build                        # Cypher projection (LadybugDB)
-npx trestle project query 'MATCH (p:Program)-[r:WRITES]->(d) RETURN p, r, d LIMIT 20'
-npx trestle serve                                # graph explorer at /, MCP at /mcp
-```
-
-A complete worked example — profile, pipeline, two resolvers, sample
-corpus — lives in [`examples/mainframe-mini`](./examples/mainframe-mini).
 
 ## How it works
 
@@ -215,38 +172,12 @@ bytes to your graph repo.
 Git is the distribution channel.
 
 ```sh
-git remote add upstream https://ampcode.com/@jesse/trestle   # once
+git remote add upstream https://github.com/ampcode/trestle   # once
 git fetch upstream && git merge upstream/main
 ```
 
 Engine code lives in `src/`; your profile, pipeline, resolvers, and corpora
 live beside it and rarely conflict.
-
-## Documentation
-
-- [architecture.md](./docs/architecture.md) — design, invariants, consumer contract
-- [extract-resolve.md](./docs/extract-resolve.md) — the pipeline and resolver SDK
-- [resolver-kit.md](./docs/resolver-kit.md) — resolver patterns (index, rules, join, emit)
-- [case-studies.md](./docs/case-studies.md) — what happened on real estates
-- [regression-scenarios.md](./docs/regression-scenarios.md) — behaviors the tests pin
-
-## Development
-
-```sh
-npm install
-npx tsc --noEmit
-npm test              # node --test tests/*.test.ts
-```
-
-Graph work (profile, pipeline, resolvers) should never require engine
-changes. If it does, send the change upstream.
-
-## Prior art
-
-Trestle generalizes [strangler-fig](https://github.com/JEdelstein25/strangler-fig)
-(mainframe evidence graphs and boundary discovery) and pairs with
-[ampx](https://github.com/JEdelstein25/ampxtra), a coordination ledger for
-long-running agent migrations that consumes the graph read-only.
 
 ## License
 
