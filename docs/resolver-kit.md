@@ -1,6 +1,6 @@
 # The Resolver Kit: Primitives, Strategies, and the Bootstrap Path
 
-Companion to [EXTRACT-RESOLVE.md](./EXTRACT-RESOLVE.md) §2. That document
+Companion to [extract-resolve.md](./extract-resolve.md) §2. That document
 defines the resolver *contract*; this one answers a different question: **what
 is shared across all languages and use cases that lets us streamline building
 semantic resolvers?**

@@ -1,6 +1,6 @@
 /**
  * LadybugDB projection: a regenerable Cypher-queryable materialization of
- * the live graph (ARCHITECTURE §3.5/§7.3). The SQLite store stays the
+ * the live graph (docs/architecture.md §3.5/§7.3). The SQLite store stays the
  * system of record; this projection is derived, disposable, and rebuilt
  * wholesale by `trestle project build`.
  *

@@ -31,7 +31,7 @@ corpora/*  ──extract──▶  facts  ──resolve──▶  nodes · edges
 Trestle has been run against COBOL/JCL/CICS (AWS CardDemo, IBM CBSA), a
 Java monolith (Apache OFBiz), a .NET WebForms CMS (mojoPortal), and a
 5.3M-line C++ estate (OpenOffice.org 1.0). See
-[CASE-STUDIES.md](./CASE-STUDIES.md).
+[case-studies.md](./docs/case-studies.md).
 
 ## Requirements
 
@@ -224,11 +224,11 @@ live beside it and rarely conflict.
 
 ## Documentation
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — design, invariants, consumer contract
-- [EXTRACT-RESOLVE.md](./EXTRACT-RESOLVE.md) — the pipeline and resolver SDK
-- [RESOLVER-KIT.md](./RESOLVER-KIT.md) — resolver patterns (index, rules, join, emit)
-- [CASE-STUDIES.md](./CASE-STUDIES.md) — what happened on real estates
-- [REGRESSION-SCENARIOS.md](./REGRESSION-SCENARIOS.md) — behaviors the tests pin
+- [architecture.md](./docs/architecture.md) — design, invariants, consumer contract
+- [extract-resolve.md](./docs/extract-resolve.md) — the pipeline and resolver SDK
+- [resolver-kit.md](./docs/resolver-kit.md) — resolver patterns (index, rules, join, emit)
+- [case-studies.md](./docs/case-studies.md) — what happened on real estates
+- [regression-scenarios.md](./docs/regression-scenarios.md) — behaviors the tests pin
 
 ## Development
 

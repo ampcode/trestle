@@ -1,5 +1,5 @@
 /**
- * The thin-slice milestone from EXTRACT-RESOLVE §5: one artifact pair
+ * The thin-slice milestone from docs/extract-resolve.md §5: one artifact pair
  * through the full pipe — ACCT01/DAILYINV landing as
  * `Program ─READS→ Dataset` with two-file evidence.
  */

@@ -1,6 +1,6 @@
 # Case Studies: Two Real Repos Through the Full Pipeline
 
-Companion to [EXTRACT-RESOLVE.md](./EXTRACT-RESOLVE.md). The worked examples
+Companion to [extract-resolve.md](./extract-resolve.md). The worked examples
 there are composites; this document runs two **real, verified** codebases
 through the whole lifecycle (acquire → index → resolve → project) to test
 whether the kernel survives contact with genuine enterprise mess. Facts,
@@ -375,5 +375,5 @@ predicate, one manifest parser, three P1 resolvers, and vocabulary.
    silently lie; ours either keys the edge or files a claim.
 4. **Sharpened, not changed**: dispatch *fan-out* should stay a query over
    table topology rather than materialized edges — worth stating as
-   guidance in RESOLVER-KIT (a P1 anti-pattern note), but it required no
+   guidance in resolver-kit.md (a P1 anti-pattern note), but it required no
    kernel or SDK change.

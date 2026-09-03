@@ -1,5 +1,5 @@
 /**
- * `trestle serve`: the project's query endpoint (ARCHITECTURE §5/§7).
+ * `trestle serve`: the project's query endpoint (docs/architecture.md §5/§7).
  *
  * A browser graph-analysis canvas and MCP server, meant to run as one supervised
  * service inside the project orb and be exposed through the orb portal.

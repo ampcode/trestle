@@ -171,9 +171,9 @@ which downstream orchestration can turn into review tasks.
 
 The extract and resolve stages are specified in detail, with worked Java
 monolith and mainframe→cloud examples, in
-[EXTRACT-RESOLVE.md](./EXTRACT-RESOLVE.md). The kernel's simplicity claim is
+[extract-resolve.md](./extract-resolve.md). The kernel's simplicity claim is
 stress-tested against twelve adversarial use cases in
-[REGRESSION-SCENARIOS.md](./REGRESSION-SCENARIOS.md).
+[regression-scenarios.md](./regression-scenarios.md).
 
 ### 3.4 Projections: derived, versioned, explainable
 
@@ -327,7 +327,7 @@ Four mechanisms, in increasing order of coupling:
    wiring only — never behavior.
 2. **User programs** — the primary surface for project-specific semantics;
    the user owns the entire path from artifact to graph entity, in two
-   programs with one hard boundary (see EXTRACT-RESOLVE §1.6): the
+   programs with one hard boundary (see extract-resolve.md §1.6): the
    **extraction pipeline** (filtering, unit assembly, tool selection,
    acquisition, transcription → facts, built on the kernel primitives
    `corpus`/`acquire`/`run`/`memo`/`emit`) and **resolvers** (all inference
@@ -499,7 +499,10 @@ but it is an escape hatch, not a documented peer mode.
 <graph repo root>              # a fork of the trestle repo
   package.json                 # name "trestle", private; self-reference exports ./src/index.ts
   tsconfig.json
+  LICENSE                      # Apache-2.0
+  README.md                    # front door
   AGENTS.md                    # agent operating instructions (committed)
+  docs/                        # design docs (architecture, extract-resolve, resolver-kit, ...)
   trestle.config.ts            # engine config: corpus roots, storage, service/portal
   profile.ts                   # vocabulary entrypoint (may import ./profile/*.ts fragments)
   profile.lock.json            # committed canonical snapshot; hash = profile revision
@@ -637,7 +640,7 @@ Rejected:
 
 - **Incremental ingest.** The mechanism is implemented (memo-cell input
   fingerprints → surgical fact retirement; owner-scoped directive
-  retirement; delta-driven re-resolution per §2.3 of EXTRACT-RESOLVE) and
+  retirement; delta-driven re-resolution per §2.3 of extract-resolve.md) and
   held up on the OFBiz dogfood (~42k facts), but larger estates are
   unproven.
 - **Evidence freshness granularity.** Commit + graph revision on verification

@@ -1,6 +1,6 @@
 # Kernel Regression Scenarios
 
-The simplicity test from [ARCHITECTURE.md](./ARCHITECTURE.md): a new use case
+The simplicity test from [architecture.md](./architecture.md): a new use case
 must be expressible as **pure data (profile) + executables (parsers,
 resolvers)**. The day one needs an `if` in engine code, either it revealed a
 genuinely missing mechanic (rare — add deliberately) or someone is smuggling
@@ -113,7 +113,7 @@ project references benefit from the same mechanic. Single-artifact parsing
 remains the default degenerate case (closure = 1).
 
 Follow-up: where closure rules get include paths is answered by **extraction
-rounds** (EXTRACT-RESOLVE §1.4) — build metadata like `compile_commands.json`
+rounds** (extract-resolve.md §1.4) — build metadata like `compile_commands.json`
 is parsed in an earlier round, and closure rules consume its facts.
 
 ## 6. Binary-only / runtime-only estate ❌ → evidence locators
@@ -138,7 +138,7 @@ profile's SMF corroboration, which was already quietly abusing line spans.
 
 ## 7. Same edge, different contexts ❌ → edge identity tuples
 
-**A contradiction we shipped in our own spec.** EXTRACT-RESOLVE §2.1 said
+**A contradiction we shipped in our own spec.** extract-resolve.md §2.1 said
 edges upsert on `(kind, from, to)` accumulating evidence; §4.3 said ACCT01
 reading different datasets from different JCL steps yields *multiple edges*
 that "must not be merged." Both can't be true — with upsert-on-triple, two
@@ -221,7 +221,7 @@ right primitives — artifact-hash-keyed facts (only changed files re-parse),
 revisions, freshness-pinned verification evidence — but the **invalidation
 cascade** (changed artifact → dirty facts → dirty resolver outputs → dirty
 projections → stale verification) is designed in outline only
-(ARCHITECTURE §10). This scenario doesn't reveal a wrong mechanic; it
+(architecture.md §10). This scenario doesn't reveal a wrong mechanic; it
 confirms invalidation is the highest-risk unbuilt part of the engine.
 Parse-unit closures (#5) make it slightly harder (a changed header dirties
 its closure's units) — the amendment accounts for this by keying on closure
@@ -242,5 +242,5 @@ amendment that made the kernel more uniform:
 3. **Edge identity tuples** (optional, mirrors node identity) — fixes a
    latent contradiction between upsert semantics and context multiplicity.
 
-All three are applied to [ARCHITECTURE.md](./ARCHITECTURE.md) and
-[EXTRACT-RESOLVE.md](./EXTRACT-RESOLVE.md).
+All three are applied to [architecture.md](./architecture.md) and
+[extract-resolve.md](./extract-resolve.md).

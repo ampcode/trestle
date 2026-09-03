@@ -1,6 +1,6 @@
 # Extract & Resolve: Detailed Scope
 
-Companion to [ARCHITECTURE.md](./ARCHITECTURE.md) §3.2–3.3. This document pins
+Companion to [architecture.md](./architecture.md) §3.2–3.3. This document pins
 down the two evidence-producing stages — **extract** (indexing: per-parse-unit
 facts, see §1.5) and **resolve** (corpus-wide identity and edge derivation) —
 and works both through two full examples: Java monolith decomposition and
@@ -445,7 +445,7 @@ application (turns answered claims into edges).
 Semantic resolvers are programs, but they are built from eight universal
 primitives shipped as an SDK, follow one standard template, and are usually
 authored by coding agents following the `building-resolvers` skill — see
-[RESOLVER-KIT.md](./RESOLVER-KIT.md) for the primitives, the SDK, the
+[resolver-kit.md](./resolver-kit.md) for the primitives, the SDK, the
 template, and the project bootstrap path built on them.
 
 ### 2.3 Resolution at scale
