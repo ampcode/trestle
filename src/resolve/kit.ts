@@ -7,10 +7,10 @@
  */
 import type { FactRow } from "../store/store.ts";
 import type { NodeRef } from "./directives.ts";
-import type { Emitter, Slice } from "./sdk.ts";
+import type { Emitter, Slice } from "./api.ts";
 import type { Scalar } from "../profile/validate.ts";
 
-/** ---------- named rules with per-rule confidence ---------- */
+/** ---------- named rules ---------- */
 
 export type Rule<T, R extends object> = R & { name: string; when(x: T): boolean };
 
@@ -49,7 +49,6 @@ export interface EdgeMapRule {
   identity?(f: FactRow): Record<string, Scalar>;
   props?(f: FactRow): Record<string, unknown>;
   rule: string;
-  confidence?: number;
 }
 
 export type MapRule = NodeMapRule | EdgeMapRule;
@@ -74,7 +73,7 @@ export function mapFacts(slice: Slice, emit: Emitter, table: Record<string, MapR
           emit.edge(
             rule.edge,
             { from, to, identity: rule.identity?.(f) },
-            { evidence: [f], confidence: rule.confidence ?? f.confidence, rule: rule.rule, props: rule.props?.(f) },
+            { evidence: [f], rule: rule.rule, props: rule.props?.(f) },
           );
         }
       }

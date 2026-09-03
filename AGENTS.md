@@ -47,7 +47,7 @@ Before editing each surface, load its skill from `.agents/skills/`:
 This repo is distributed by forking/cloning. Pull engine updates with git:
 
 ```sh
-git remote add upstream https://ampcode.com/@jesse/trestle  # once
+git remote add upstream https://github.com/ampcode/Trestle.git  # once
 git fetch upstream && git merge upstream/main
 ```
 

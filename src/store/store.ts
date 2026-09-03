@@ -15,7 +15,6 @@ export interface FactRow {
   cell: string;
   sourcePath: string;
   locator: unknown;
-  confidence: number;
   authority: { tool: string; version?: string; asOf?: string } | null;
   props: Record<string, unknown>;
 }
@@ -47,7 +46,6 @@ export interface FactInput {
   kind: string;
   sourcePath: string;
   locator?: unknown;
-  confidence?: number;
   authority?: { tool: string; version?: string; asOf?: string };
   props: Record<string, unknown>;
 }
@@ -86,7 +84,6 @@ CREATE TABLE IF NOT EXISTS facts (
   cell        TEXT NOT NULL,
   source_path TEXT NOT NULL,
   locator     TEXT,
-  confidence  REAL NOT NULL DEFAULT 1,
   authority   TEXT,
   props       TEXT NOT NULL,
   created_rev INTEGER NOT NULL,
@@ -128,7 +125,6 @@ CREATE TABLE IF NOT EXISTS evidence (
   fact_id          INTEGER,
   source_path      TEXT,
   locator          TEXT,
-  confidence       REAL NOT NULL DEFAULT 1,
   resolver         TEXT NOT NULL,
   resolver_version TEXT NOT NULL DEFAULT '0',
   rule             TEXT,
@@ -306,8 +302,8 @@ export class Store {
     if (errors.length > 0) throw new Error(`emit rejected:\n  - ${errors.join("\n  - ")}`);
     const r = this.db
       .prepare(
-        `INSERT INTO facts (kind, version, cell, source_path, locator, confidence, authority, props, created_rev)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (kind, version, cell, source_path, locator, authority, props, created_rev)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         fact.kind,
@@ -315,7 +311,6 @@ export class Store {
         cell,
         fact.sourcePath,
         fact.locator === undefined ? null : JSON.stringify(fact.locator),
-        fact.confidence ?? 1,
         fact.authority === undefined ? null : JSON.stringify(fact.authority),
         JSON.stringify(fact.props),
         rev,
@@ -333,7 +328,7 @@ export class Store {
   factsByKind(kind: string): FactRow[] {
     const rows = this.db
       .prepare(
-        `SELECT id, kind, version, cell, source_path, locator, confidence, authority, props
+        `SELECT id, kind, version, cell, source_path, locator, authority, props
          FROM facts WHERE kind = ? AND retired_rev IS NULL ORDER BY id`,
       )
       .all(kind) as Record<string, unknown>[];
@@ -495,16 +490,15 @@ export class Store {
         for (const ev of d.evidence ?? []) {
           this.db
             .prepare(
-              `INSERT INTO evidence (entity_type, entity_stable, fact_id, source_path, locator, confidence,
+              `INSERT INTO evidence (entity_type, entity_stable, fact_id, source_path, locator,
                  resolver, resolver_version, rule, note, created_rev)
-               VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
               stable,
               ev.factId ?? null,
               ev.sourcePath ?? null,
               ev.locator === undefined ? null : JSON.stringify(ev.locator),
-              d.confidence ?? ev.confidence ?? 1,
               resolverName,
               resolverVersion,
               d.rule ?? null,
@@ -545,16 +539,15 @@ export class Store {
         for (const ev of d.evidence) {
           this.db
             .prepare(
-              `INSERT INTO evidence (entity_type, entity_stable, fact_id, source_path, locator, confidence,
+              `INSERT INTO evidence (entity_type, entity_stable, fact_id, source_path, locator,
                  resolver, resolver_version, rule, note, created_rev)
-               VALUES ('edge', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               VALUES ('edge', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
               stable,
               ev.factId ?? null,
               ev.sourcePath ?? null,
               ev.locator === undefined ? null : JSON.stringify(ev.locator),
-              d.confidence ?? ev.confidence ?? 1,
               resolverName,
               resolverVersion,
               d.rule ?? null,
@@ -809,9 +802,9 @@ export class Store {
         this.db.prepare(`UPDATE evidence SET retired_rev = ? WHERE id = ?`).run(rev, ev.id as number);
         this.db
           .prepare(
-            `INSERT INTO evidence (entity_type, entity_stable, fact_id, source_path, locator, confidence,
+            `INSERT INTO evidence (entity_type, entity_stable, fact_id, source_path, locator,
                resolver, resolver_version, rule, note, created_rev)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             ev.entity_type as string,
@@ -819,7 +812,6 @@ export class Store {
             (ev.fact_id as number) ?? null,
             (ev.source_path as string) ?? null,
             (ev.locator as string) ?? null,
-            ev.confidence as number,
             ev.resolver as string,
             ev.resolver_version as string,
             (ev.rule as string) ?? null,
@@ -846,7 +838,6 @@ function rowToFact(row: Record<string, unknown>): FactRow {
     cell: row.cell as string,
     sourcePath: row.source_path as string,
     locator: row.locator ? JSON.parse(row.locator as string) : null,
-    confidence: row.confidence as number,
     authority: row.authority ? JSON.parse(row.authority as string) : null,
     props: JSON.parse(row.props as string),
   };

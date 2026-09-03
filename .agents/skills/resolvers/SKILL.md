@@ -36,9 +36,11 @@ silence is not an option. Auto-vivified **stub** endpoints (edges pointing
 at nodes nobody declared) are normal: they are the survey's unresolved
 population, which a later resolver, alias, or pipeline fix explains.
 
-Confidence is a property of the *rule*, not the resolver: a literal call
-site might warrant 1.0, a naming-convention match 0.7. Tag every directive
-with `rule:` so the survey and reviewers can trace conclusions.
+There is no confidence score. A rule either justifies an edge or it does
+not; if a match is too weak to stand as an edge (a naming convention, a
+partial string), emit a claim instead and tighten the rule or the profile
+until it is. Tag every directive with `rule:` so the survey and reviewers
+can trace conclusions.
 
 ## Mechanics (copy these shapes)
 
@@ -56,7 +58,7 @@ export default resolver({
       "service-defined": [
         { node: (f) => ({ kind: "Service", identity: { name: f.props.name as string } }),
           rule: "service-node" },
-        // edge rows: { edge, from(f), to(f), identity?(f), rule, confidence? }
+        // edge rows: { edge, from(f), to(f), identity?(f), rule, props?(f) }
       ],
     });
   },
@@ -83,7 +85,7 @@ export default resolver({
         emit.edge("READS",
           { from: `Program:${fc.props.program}`, to: `Dataset:${m.props.dataset}`,
             identity: { executionContext: `${m.props.job}.${m.props.step}` } },
-          { evidence: [fc, m], confidence: 0.95, rule: "open-input" });
+          { evidence: [fc, m], rule: "open-input" });
       }
     }
   },
@@ -93,7 +95,7 @@ export default resolver({
 - `emit.node(kind, identity, props?, { evidence?, rule })` — positional:
   identity object first, then props. Cite the defining fact as evidence;
   `trestle doctor` flags declared nodes with none.
-- `emit.edge(kind, { from, to, identity? }, { evidence, confidence?, rule })`
+- `emit.edge(kind, { from, to, identity? }, { evidence, rule, props? })`
   — evidence is required; node refs are `"Kind:value"` (single-field
   identity) or `{ kind, identity: {...} }`.
 - `slice.facts(kind)` requires the kind in `consumes.facts`;
@@ -104,5 +106,5 @@ export default resolver({
   from co-writer edges) should pass those rows straight into its own
   `evidence` so it cites the original facts instead of inventing a weaker
   locator.
-- Per-rule branching with confidence: `rules("set", [{ name, when, ... }])`
+- Per-rule branching: `rules("set", [{ name, when, ... }])`
   then `.require(x)` / `.apply(x)`.

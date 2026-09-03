@@ -48,13 +48,12 @@ test("project build + Cypher queries over the mainframe graph", async (t) => {
       projectionPath(),
       `MATCH (p:Program)-[r:READS]->(d:Dataset)
        RETURN p.name AS program, d.name AS dataset, r.executionContext AS ctx,
-              r.confidence AS confidence, r.evidenceCount AS evidence`,
+              r.evidenceCount AS evidence`,
     );
     assert.equal(rows.length, 1);
     assert.equal(rows[0]!.program, "ACCT01");
     assert.equal(rows[0]!.dataset, "PROD.INVOICE.MASTER");
     assert.equal(rows[0]!.ctx, "DAILYINV.STEP030");
-    assert.equal(rows[0]!.confidence, 0.95);
     assert.equal(Number(rows[0]!.evidence), 2); // COBOL + JCL sides
   });
 
@@ -85,7 +84,7 @@ test("project build + Cypher queries over the mainframe graph", async (t) => {
 });
 
 test("reserved-word kinds and props survive projection (identifier quoting)", async () => {
-  // Real collisions from dogfood runs: node kind "Table", props "group"
+  // Real collisions seen in practice: node kind "Table", props "group"
   // and "table" are Cypher/Ladybug reserved words. The projection must
   // quote identifiers instead of forcing profile renames.
   const profile = defineProfile({

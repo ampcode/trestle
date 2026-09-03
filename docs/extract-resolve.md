@@ -29,7 +29,7 @@ simple, polyglot, and independently testable, and concentrates all the clever
 Extraction is **user code**. Trestle does not own file matching, filtering,
 unit assembly, or tool selection — the project ships an **extraction
 pipeline**: any executable (typically TypeScript against the `trestle`
-SDK) that decides how artifacts become facts. Which files
+root export) that decides how artifacts become facts. Which files
 matter, which tool parses them, what constitutes a parse unit, what happens
 in what order — all plain code (loops, ifs, queries over earlier facts),
 never engine configuration. The engine contributes five primitives that make
@@ -46,7 +46,7 @@ whatever the pipeline does deterministic, incremental, and auditable:
 The engine never contains a format, language, or framework name — and after
 this change, it also never contains a *policy* about which files are
 interesting. "Acquirer", "assembler", and "parser" survive as **patterns**
-the SDK has helpers and templates for, not as kernel-scheduled roles.
+the pipeline API has helpers and templates for, not as kernel-scheduled roles.
 
 ### 1.1 Parser contract
 
@@ -126,7 +126,6 @@ Every fact shares an envelope:
   "kind": "call-observed",
   "version": 1,
   "locator": { "type": "lines", "startLine": 88, "endLine": 88 },  // within sourcePath
-  "confidence": 1.0,                            // parser's local certainty only
   "authority": { "tool": "scip-java", "version": "0.10.4", "asOf": "2026-08-12" },  // optional
   "props": { /* kind-specific, schema-validated */ }
 }
@@ -167,10 +166,10 @@ profiles use it as-is, extend it, or add custom kinds:
 | `execution-observed` | one artifact causes execution of a named unit (JCL EXEC, scheduler entry, main-class manifest) |
 | `annotation-observed` | structured metadata attached to a definition |
 
-Local certainty vs. global certainty: a parser reports `confidence: 1.0` for a
-dynamic `CALL WS-PROG` — it is *certain the call site exists*. Whether the
-callee is resolvable is the resolver's judgment and lands on the edge's
-evidence records, not the fact.
+Local certainty vs. global certainty: a parser emits a `call-observed` fact
+for a dynamic `CALL WS-PROG` — it is *certain the call site exists*. Whether
+the callee is resolvable is the resolver's judgment: an edge if a rule can
+justify it, a claim if not. There is no confidence number on either side.
 
 ### 1.4 Compiler and build output as artifacts
 
@@ -192,7 +191,6 @@ sometimes the *only* evidence:
   ```jsonc
   { "kind": "call-observed", "version": 1,
     "locator": { "type": "lines", "startLine": 3411 },   // in the listing
-    "confidence": 1.0,
     "props": { "caller": "ACCT01", "callee": "ACCT9M",
                "resolvedBy": "compiler-xref", "compileDate": "1994-03-02" } }
   ```
@@ -247,10 +245,11 @@ resolves to X, source parse says Y), the resolver files a claim instead of
 picking a winner: a conflict is a fact about the corpus (stale build?
 missing source version?) that a human or agent should see.
 
-The confidence layering generalizes what §3.3's `call-resolution` already
-does with bytecode: compiler-resolved evidence outranks source heuristics,
-both attach to the same edges as separate evidence records, and query-time
-confidence derivation sees the full picture.
+The evidence layering generalizes what §3.3's `call-resolution` already
+does with bytecode: compiler-resolved facts and source-derived facts live in
+distinct fact kinds, a resolver decides which mechanism may assert which
+edge, and both attach to the same edges as separate evidence records so a
+query sees every citation.
 
 ### 1.5 Indexing: first-hand and adopted indexes
 
@@ -329,12 +328,12 @@ longer contains parser rules, globs, or rounds — those were behavior, and
 behavior belongs in the pipeline.
 
 "Acquirer", "assembler", "first-hand parser", "adopting indexer" remain as
-**SDK patterns**: the `trestle` root export ships envelope and locator
+**pipeline API patterns**: the `trestle` root export ships envelope and locator
 builders, authority stamping and coverage-fact helpers, pinned-toolchain
 wrappers around `run`, a manifest scaffold for shareable parser tools, and a
 golden-fixture test runner, plus a `building-extraction` skill — so writing
 a pipeline is a template exercise for a coding agent, not a research
-project. The SDK is convenience, never contract: any executable emitting
+project. The API is convenience, never contract: any executable emitting
 valid envelopes through the write boundary is a full citizen.
 
 **Foreign indexes are ordinary parser output.** A SCIP index, a ctags file,
@@ -378,8 +377,8 @@ output JSONL stream of **directives**:
 ```jsonc
 { "op": "node",  "kind": "Bean", "qualifiedName": "billing.invoiceService", "props": { … } }
 { "op": "edge",  "kind": "INJECTS", "from": "Class:com.acme.OrderFlow", "to": "Bean:billing.invoiceService",
-  "evidence": { "sourcePath": "…/OrderFlow.java", "span": {"startLine": 31}, "confidence": 0.95,
-                "note": "@Autowired by type; single candidate" } }
+  "evidence": { "sourcePath": "…/OrderFlow.java", "span": {"startLine": 31} },
+  "rule": "autowired-by-type-single-candidate" }
 { "op": "alias", "canonical": "Program:ACCT01", "alias": "Program:PGM=ACCT01" }
 { "op": "claim", "kind": "ambiguous-injection", "about": ["Class:com.acme.OrderFlow"],
   "detail": "3 beans implement PaymentGateway; no @Qualifier", "candidates": ["…"] }
@@ -395,8 +394,7 @@ Directive semantics:
   set `provenance: declared`; a later declaration upgrades a stub in place.
   Stubs remaining after all phases are themselves queryable ("what do we
   reference but know nothing about?"). Edges accumulate evidence records; they never
-  replace earlier evidence. Confidence is derived at query time from the
-  evidence set. Edge merge identity defaults to `(kind, from, to)`; an edge
+  replace earlier evidence. Edge merge identity defaults to `(kind, from, to)`; an edge
   kind may declare an **identity tuple** of props (mirroring node identity),
   in which case differing identity-prop values are distinct edges — how the
   same program reading the same dataset from two different JCL steps stays
@@ -435,7 +433,7 @@ Phases are just ordered integers; the conventions below keep profiles legible:
 | 20 | structural joins: the links parsers couldn't make (DD-names, bean wiring, includes) |
 | 30 | semantic enrichment: data mapping, transaction boundaries, routing |
 | 40 | inference: dynamic-target resolution, convention-based joins, claims |
-| 50 | corroboration: runtime/operational evidence raising or lowering confidence |
+| 50 | corroboration: runtime/operational evidence added as further citations |
 
 Built-in resolvers (engine-provided, configured not coded): qualified-name
 unification, include/copybook resolution by name+content-hash, duplicate
@@ -443,9 +441,9 @@ lineage classification (canonical/mirror/historical), decision-file
 application (turns answered claims into edges).
 
 Semantic resolvers are programs, but they are built from eight universal
-primitives shipped as an SDK, follow one standard template, and are usually
+primitives shipped as the resolver API, follow one standard template, and are usually
 authored by coding agents following the `building-resolvers` skill — see
-[resolver-kit.md](./resolver-kit.md) for the primitives, the SDK, the
+[resolver-kit.md](./resolver-kit.md) for the primitives, the API, the
 template, and the project bootstrap path built on them.
 
 ### 2.3 Resolution at scale
@@ -520,7 +518,7 @@ ontology:
 | `spring-config` | `applicationContext*.xml`, `application*.{properties,yaml}` | `binding-observed` (bean defs, property values, profiles), `reference-observed` (bean refs) | |
 | `persistence-config` | `persistence.xml`, `orm.xml`, Liquibase/Flyway changelogs | `binding-observed`, `layout-defined` | |
 | `sql-ddl` | schema dumps, migration SQL | `layout-defined` (Table + columns), `reference-observed` (FKs), `data-access-observed` (for DML in migrations) | |
-| `sql-in-code` | (re-invoked on string constants extracted by `java-source`) | `data-access-observed` with table names, lower parse fidelity | regex/miniparser over JPQL/native SQL strings; confidence reflects it |
+| `sql-in-code` | (re-invoked on string constants extracted by `java-source`) | `data-access-observed` with table names, lower parse fidelity | regex/miniparser over JPQL/native SQL strings; its own fact kind so resolvers can treat it separately |
 | `web-descriptors` | `web.xml`, `*.jsp` (refs only) | `binding-observed` (servlet mappings, filters) | |
 | `mq-config` | broker/destination config | `unit-defined` (Queue), `binding-observed` | |
 
@@ -531,7 +529,7 @@ Example — one `java-source` output fragment for a service class:
   "props": { "on": "com.acme.billing.InvoiceService", "onKind": "class",
              "annotation": "org.springframework.stereotype.Service" } }
 
-{ "kind": "call-observed", "version": 1, "span": {"startLine": 88}, "confidence": 1.0,
+{ "kind": "call-observed", "version": 1, "span": {"startLine": 88},
   "props": { "caller": "com.acme.billing.InvoiceService#close(Ljava/lang/String;)V",
              "calleeName": "recalculate", "receiverTypeHint": "com.acme.tax.TaxEngine",
              "dispatch": "virtual" } }
@@ -553,11 +551,11 @@ can be discounted later. Emit `alias` directives for inner-class name forms
 **Phase 20 — `call-resolution`.** The precision merge:
 
 - where bytecode facts exist, they win: `invokestatic`/`invokespecial` →
-  `CALLS` at confidence 1.0;
+  `CALLS`;
 - `invokevirtual`/`invokeinterface` → Class-Hierarchy Analysis over the
-  unified hierarchy. Single concrete implementor → one edge, 0.95. N
-  implementors → N edges at graded confidence *plus* one
-  `ambiguous-dispatch` claim if N exceeds a threshold;
+  unified hierarchy. Single concrete implementor → one edge. N
+  implementors → an `ambiguous-dispatch` claim listing the candidates, not
+  N guessed edges;
 - `invokedynamic`/reflection remain for phase 40;
 - source-only call facts (no bytecode available) resolve by import + type
   hint at 0.7.
@@ -573,7 +571,7 @@ the merged property facts.
 **Phase 30 — `jpa-mapping`.** `@Entity`/`@Table` + naming-strategy config →
 `Entity ─MAPS_TO→ Table`; repository interfaces and `EntityManager` usage →
 method-level `READS`/`WRITES` on tables; `sql-in-code` table names join here
-at lower confidence; DDL FKs → `FK` edges. Result: **database coupling
+under their own rule name; DDL FKs → `FK` edges. Result: **database coupling
 becomes graph-visible** — two "unrelated" packages hammering the same table
 is now an edge pattern, not a surprise during the split.
 
@@ -600,7 +598,7 @@ the strangler-fig "shared mutable state" heavy weight.
 
 **Phase 50 — `runtime-corroboration` (optional).** APM traces / access logs
 parsed as ordinary artifacts corroborate `CALLS`/`HTTP_CALLS`/table access:
-runtime-observed edges gain a high-confidence evidence record; statically
+runtime-observed edges gain a runtime evidence record; statically
 asserted but never-observed edges keep static evidence only (input for
 dead-code claims, not deletion).
 
@@ -671,7 +669,7 @@ ontology:
 Example — `cobol` dynamic call and file-control facts:
 
 ```jsonc
-{ "kind": "call-observed", "version": 1, "span": {"startLine": 2140}, "confidence": 1.0,
+{ "kind": "call-observed", "version": 1, "span": {"startLine": 2140},
   "props": { "caller": "ACCT01", "calleeExpression": "WS-NEXT-PGM",
              "dispatch": "dynamic",
              "assignmentsObserved": ["MOVE 'ACCT9' TO WS-NEXT-PGM-PFX"] } }
@@ -745,8 +743,8 @@ Airflow DAGs) — each stream is a projection over `PRECEDES` + shared-dataset
 handoffs (`Step WRITES D` then later `Step READS D` = a data handoff edge the
 target design must preserve or re-plumb).
 
-**Phase 50 — `runtime-corroboration`.** SMF/CICS statistics raise confidence
-on executed paths and, critically for decommission: `unit-defined` programs
+**Phase 50 — `runtime-corroboration`.** SMF/CICS statistics add runtime
+evidence to executed paths and, critically for decommission: `unit-defined` programs
 with **zero** runtime executions over the observation window get a
 `dormant-candidate` claim. Dead code is never deleted from the graph — it's
 flagged, because "unused for 13 months" and "unused" differ by one year-end

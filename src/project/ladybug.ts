@@ -6,8 +6,8 @@
  *
  * Mapping: one node table per node kind (stableId PK + identity fields +
  * scalar props as columns, rest as propsJson), one rel table per edge kind
- * (multi-pair FROM/TO from the profile, edge props + confidence/
- * evidenceCount derived from live evidence rows).
+ * (multi-pair FROM/TO from the profile, edge props + evidenceCount
+ * derived from live evidence rows).
  *
  * @ladybugdb/core is an optional peer dependency — the engine keeps zero
  * required runtime deps; importing this module without it installed fails
@@ -232,7 +232,7 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
         .join("");
       await exec(
         handle,
-        `CREATE REL TABLE ${ident(tableName(kind))}(${pairs.join(", ")}, ${cols}confidence DOUBLE, evidenceCount INT64)`,
+        `CREATE REL TABLE ${ident(tableName(kind))}(${pairs.join(", ")}, ${cols}evidenceCount INT64)`,
       );
       result.relTables++;
     }
@@ -257,7 +257,7 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
       }
     }
 
-    // ---- edges (confidence/evidenceCount derived from live evidence) ----
+    // ---- edges (evidenceCount derived from live evidence) ----
     for (const [kind, def] of Object.entries(profile.edges)) {
       const cols = edgeColumns(def);
       for (const e of store.liveEdges(kind)) {
@@ -265,13 +265,12 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
         const toKind = kindOfStable.get(e.toStable);
         if (!fromKind || !toKind) continue; // endpoint not live; orphan cleanup owns this
         const evidence = store.liveEvidenceFor(e.stableId);
-        const confidence = evidence.length ? Math.max(...evidence.map((ev) => Number(ev.confidence))) : 0;
         await exec(
           handle,
           `MATCH (a:${ident(tableName(fromKind))} {stableId: ${lit(e.fromStable)}}), (b:${ident(tableName(toKind))} {stableId: ${lit(e.toStable)}}) ` +
             `CREATE (a)-[:${ident(tableName(kind))} {` +
             cols.map((c) => `${ident(c.name)}: ${lit(e.props[c.name])}, `).join("") +
-            `confidence: ${confidence}, evidenceCount: ${evidence.length}}]->(b)`,
+            `evidenceCount: ${evidence.length}}]->(b)`,
         );
         result.edges++;
       }

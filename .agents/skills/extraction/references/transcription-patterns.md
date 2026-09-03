@@ -45,10 +45,12 @@ symbols/occurrences into facts like `symbol-defined` /
 occurrences into edges (and deciding which symbols are graph-worthy) is
 resolver work, not pipeline work.
 
-## Confidence
+## Certainty is structural, not numeric
 
-`confidence: 1` for facts a deterministic tool asserted. Lower it for
-heuristic tiers: regex scans over free-form code, ctags symbol maps,
-LLM-backed extraction. The graph keeps confidence per evidence row, so
-resolvers and queries can weigh mechanisms differently (e.g. OFBiz weighted
-import-based references at 0.3 against compiler-resolved references at 1.0).
+There is no confidence score. A fact is what the tool said; `authority`
+records which tool and version said it. If a reader is too weak to assert
+something (a regex guessing at a call target, a name that might be one of
+several), do not emit a weaker fact — emit what was literally observed
+(the token, the string) and let a resolver turn it into an edge or a
+claim. Facts from different mechanisms stay in separate fact kinds so a
+resolver can choose which mechanism it trusts for which edge.

@@ -1,10 +1,11 @@
 /**
- * trestle — the SDK root export.
+ * trestle — the root export that user files import by the package
+ * self-reference (`import { resolver } from "trestle"`).
  *
  * Profile authoring:   defineProfile, t
  * Extraction pipeline: pipeline
- * Resolvers:           resolver, rules, mapFacts
- * Engine (embedding):  Store, runExtraction, runResolvers, computeSurvey
+ * Resolver API:        resolver, rules, mapFacts
+ * Engine internals (used by the CLI and tests): Store, runExtraction, runResolvers, computeSurvey
  */
 
 export { defineProfile, buildLock, profileFromLock } from "./profile/define.ts";
@@ -24,8 +25,8 @@ export { pipeline } from "./extract/pipeline.ts";
 export type { PipelineCtx, PipelineFn, Corpus } from "./extract/pipeline.ts";
 export { runExtraction } from "./extract/run.ts";
 
-export { resolver } from "./resolve/sdk.ts";
-export type { ResolverDef, Slice, Emitter, FactIndex } from "./resolve/sdk.ts";
+export { resolver } from "./resolve/api.ts";
+export type { ResolverDef, Slice, Emitter, FactIndex } from "./resolve/api.ts";
 export { rules, mapFacts } from "./resolve/kit.ts";
 export type { Rule, RuleSet, MapRule } from "./resolve/kit.ts";
 export type { Directive, NodeRef, EvidenceInput } from "./resolve/directives.ts";

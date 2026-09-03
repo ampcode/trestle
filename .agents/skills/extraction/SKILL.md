@@ -36,7 +36,8 @@ need otherwise. Paths are relative to this skill directory.
 - One observation per fact, verbatim — unexpanded variables stay unexpanded.
 - Every fact kind and prop must be declared in `profile.ts` first;
   `emit` is schema-checked and rejects undeclared vocabulary.
-- Tool-backed facts carry `authority: { tool, version }`; heuristic or
-  LLM-backed extractors lower `confidence` (< 1.0).
+- Tool-backed facts carry `authority: { tool, version }`. There is no
+  confidence score: emit what was observed, and let the resolver decide
+  whether that mechanism is strong enough to make an edge or only a claim.
 - Facts persist across runs: iterate on resolvers without re-extracting.
   `trestle extract` re-runs only changed cells.

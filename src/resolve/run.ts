@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Store } from "../store/store.ts";
-import { isResolverModule, makeEmitter, makeSlice, type ResolverModule } from "./sdk.ts";
+import { isResolverModule, makeEmitter, makeSlice, type ResolverModule } from "./api.ts";
 
 export interface ResolveResult {
   resolver: string;

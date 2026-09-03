@@ -52,7 +52,6 @@ export interface VisualizationGraph {
     kind: string;
     identity: Record<string, string | number | boolean>;
     props: Record<string, unknown>;
-    confidence: number;
     evidenceCount: number;
   }>;
 }
@@ -118,10 +117,10 @@ export function readVisualizationGraph(cfg: ServeConfig): VisualizationGraph {
       (
         store.db
           .prepare(
-            `SELECT entity_stable, MAX(confidence) AS confidence, COUNT(*) AS evidence_count
+            `SELECT entity_stable, COUNT(*) AS evidence_count
              FROM evidence WHERE retired_rev IS NULL GROUP BY entity_stable`,
           )
-          .all() as { entity_stable: string; confidence: number; evidence_count: number }[]
+          .all() as { entity_stable: string; evidence_count: number }[]
       ).map((row) => [row.entity_stable, row]),
     );
     const nodes = store.liveNodes().map((node) => {
@@ -146,7 +145,6 @@ export function readVisualizationGraph(cfg: ServeConfig): VisualizationGraph {
         kind: edge.kind,
         identity: edge.identity,
         props: edge.props,
-        confidence: Number(ev?.confidence ?? 0),
         evidenceCount: Number(ev?.evidence_count ?? 0),
       };
     });
@@ -174,7 +172,7 @@ export const TOOLS: ToolDef[] = [
     description:
       "Run a Cypher query against the project's knowledge-graph projection. " +
       "Node tables = node kinds (identity + scalar props as columns, propsJson, provenance); " +
-      "rel tables = edge kinds with confidence and evidenceCount. " +
+      "rel tables = edge kinds with evidenceCount. " +
       "Kind names with dashes become underscores. Returns rows as JSON.",
     inputSchema: {
       type: "object",

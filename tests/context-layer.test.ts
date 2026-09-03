@@ -1,6 +1,6 @@
 /**
  * The context layer (skills + the committed graph-repo user surface) and
- * the incrementality fixes surfaced by the OFBiz dogfood run: fingerprint
+ * the incrementality fixes surfaced on a large Java corpus: fingerprint
  * seeds invalidate cells on code/profile change, and stale cells retire
  * their facts.
  */
@@ -14,7 +14,7 @@ import { buildLock, defineProfile } from "../src/profile/define.ts";
 import { t } from "../src/profile/schema.ts";
 import { pipeline } from "../src/extract/pipeline.ts";
 import { runExtraction } from "../src/extract/run.ts";
-import { resolver } from "../src/resolve/sdk.ts";
+import { resolver } from "../src/resolve/api.ts";
 import { runResolvers } from "../src/resolve/run.ts";
 
 const REPO = join(import.meta.dirname, "..");

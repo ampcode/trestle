@@ -14,8 +14,8 @@ strategy DSL: the primary resolver authors are coding agents, which write
 programs fluently and hit a DSL's expressiveness walls exactly where legacy
 estates get weird. What the kit ships instead:
 
-1. an **SDK** — the eight primitives as library functions, plus the
-   scaffolding every resolver shares;
+1. a **resolver API** — the eight primitives as library functions, plus
+   the scaffolding every resolver shares;
 2. a **program template** — one standard shape every resolver follows;
 3. an **authoring skill** — the instructions an agent (or human) follows to
    go from survey output to a reviewed, fixture-tested resolver.
@@ -72,9 +72,9 @@ The degenerate-but-dominant case: when the fact already *contains* the
 conclusion (SCIP reference, compiler cross-reference, linker binding, typed
 AST), turning it into a graph entity is a mechanical rewrite, not a join.
 `mapFacts` takes a rule table — fact kind + predicate → entity template with
-identity extraction — and the SDK does the rest: evidence attaches
+identity extraction — and the API does the rest: evidence attaches
 automatically from the fact's locator and `authority`, endpoints
-auto-vivify, each rule gets a name and confidence:
+auto-vivify, each rule gets a name:
 
 ```ts
 mapFacts({
@@ -83,7 +83,7 @@ mapFacts({
     edge: "CALLS",
     from: f => id.method(f.props.caller),   // SCIP symbol → profile identity
     to:   f => id.method(f.props.callee),
-    rule: "scip-call", confidence: 0.95,
+    rule: "scip-call",
   }],
   "unit-defined": [{
     node: f => ({ kind: kindFromScip(f.props.kind), qualifiedName: id.of(f.props.symbol) }),
@@ -124,7 +124,8 @@ Instances: Rails pluralization/snake_case, JPA naming strategies, mainframe
 prefix conventions (`ACCT9*` router families), GDG normalization, DD-name
 patterns, module coordinates. Transforms compose with P1 (transform the key,
 then join). Expressed as declarative rules: literal maps, case transforms,
-affix patterns, regexes — each rule named, each carrying its own confidence.
+affix patterns, regexes — each rule named so every edge says which one
+matched.
 
 ### P3. Constant propagation — bound local value flow
 
@@ -165,7 +166,7 @@ and the weight model share vocabulary.
 ### P6. Corroboration — merge multi-source evidence, detect conflict
 
 ```
-same logical assertion, N evidence records ⇒ derived confidence; disagreement ⇒ claim
+same logical assertion, N evidence records ⇒ one edge, N citations; disagreement ⇒ claim
 ```
 
 Instances: bytecode vs source vs SCIP on one CALLS edge, runtime traces
@@ -187,9 +188,9 @@ gain, and it is how convention knowledge is *mined* rather than guessed.
 
 ---
 
-## 3. The SDK and the template
+## 3. The resolver API and the template
 
-Every resolver is the same five-part program; the SDK makes each part one or
+Every resolver is the same five-part program; the API makes each part one or
 two calls, and the type system enforces the parts you must not skip
 (two-sided evidence, an unmatched policy). The canonical binding-join,
 `dd-resolution`, as an actual resolver program:
@@ -211,11 +212,11 @@ export default resolver({
     const stepsExecuting = slice.index("execution-observed",
       f => [f.props.executes]);   // program name → steps that run it
 
-    // 2. RULES — named, each with its own confidence
+    // 2. RULES — named, so every edge says which rule produced it
     const modeRules = rules("access-mode", [
-      { name: "open-input",  when: fc => fc.props.mode === "input",  edge: "READS",  conf: 0.95 },
-      { name: "open-output", when: fc => fc.props.mode === "output", edge: "WRITES", conf: 0.95 },
-      { name: "open-io",     when: () => true,                       edge: "UPDATES", conf: 0.85 },
+      { name: "open-input",  when: fc => fc.props.mode === "input",  edge: "READS" },
+      { name: "open-output", when: fc => fc.props.mode === "output", edge: "WRITES" },
+      { name: "open-io",     when: () => true,                       edge: "UPDATES" },
     ]);
 
     // 3. JOIN — P1: reference(key) ⋈ binding(key→value), scoped
@@ -230,7 +231,7 @@ export default resolver({
         emit.edge(rule.edge,
           { from: `Program:${program}`, to: `Dataset:${dd.props.dataset}`,
             identity: { executionContext: `${dd.props.job}.${dd.props.step}` } },
-          { evidence: [fc, dd], confidence: rule.conf, rule });
+          { evidence: [fc, dd], rule: rule.name });
       }
 
       // 5. UNMATCHED — mandatory; silence is not an option
@@ -242,7 +243,7 @@ export default resolver({
 });
 ```
 
-The SDK surface, mapped to the primitives: `bindingJoin` / `slice.index`
+The API surface, mapped to the primitives: `bindingJoin` / `slice.index`
 (P1), `nameRules` (P2 — ordered transform rules, each named + confident),
 `propagateConstants` (P3), `fixpoint` (P4), `liftEdges` (P5),
 `corroborate` (P6), and `survey` (P7). Plus the shared skin every resolver
@@ -301,11 +302,11 @@ experience, because the primary resolver author is a coding agent. The skill
 carries: the five-part template with the worked example above, the eight
 primitives and when each applies, the author's invariants (§5) as hard
 requirements, and the exact workflow — read the survey, inspect the real
-corpus samples behind a finding, write the resolver against the SDK, make the
+corpus samples behind a finding, write the resolver against the API, make the
 golden fixtures pass, run `trestle resolve --diff`, and present the impact
 diff plus a sample of newly emitted edges for human review. "Bootstrap my
 project" then becomes an agent task where humans review evidence and diffs,
-not code style: per-rule confidence and two-sided evidence are what make a
+not code style: named rules and two-sided evidence are what make a
 resolver written in thirty seconds by an agent *auditable* in two minutes by
 a person.
 
@@ -325,12 +326,13 @@ Restated compactly — every semantic resolver, strategy or custom, obeys:
    will disagree with it.
 4. **Additive and deterministic.** Emit, never delete; same slice in, same
    directives out. Composability of phases depends on both.
-5. **Named rules, per-rule confidence.** Calibration and audit happen at rule
-   granularity.
+5. **Named rules.** Audit happens at rule granularity: every edge names the
+   rule that produced it.
 6. **Two-sided evidence.** A join emits evidence citing both joined locators,
    or it isn't a join worth trusting.
-7. **Uncertainty is output.** Cheap-to-be-wrong → low-confidence edge;
-   expensive-to-be-wrong → claim. Silence is never an option — the SDK's
+7. **Uncertainty is output.** A rule that cannot justify an edge emits a
+   claim, never a weaker edge; there is no confidence score to hide
+   behind. Silence is never an option — the API's
    emitter requires a claim or an explicit `ignore` for every unmatched
    reference.
 8. **Survey before rules.** Mine conventions from the corpus population;

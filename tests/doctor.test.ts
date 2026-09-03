@@ -67,9 +67,9 @@ test("each pathology fires its check", () => {
       INSERT INTO evidence (entity_type, entity_stable, fact_id, resolver, created_rev)
         VALUES ('edge', 'fake-orphan-edge', 999999, 'test-resolver', 1);
       -- duplicate facts: identical rows from two cells
-      INSERT INTO facts (kind, version, cell, source_path, locator, confidence, props, created_rev)
-        VALUES ('call-observed', 1, 'cell-a', 'x.cbl', NULL, 1, '{"callee":"Z"}', 1),
-               ('call-observed', 1, 'cell-b', 'x.cbl', NULL, 1, '{"callee":"Z"}', 1);
+      INSERT INTO facts (kind, version, cell, source_path, locator, props, created_rev)
+        VALUES ('call-observed', 1, 'cell-a', 'x.cbl', NULL, '{"callee":"Z"}', 1),
+               ('call-observed', 1, 'cell-b', 'x.cbl', NULL, '{"callee":"Z"}', 1);
       -- duplicate evidence: same entity/fact/resolver/rule twice
       INSERT INTO evidence (entity_type, entity_stable, fact_id, resolver, rule, created_rev)
         SELECT 'node', 'fake-dupe-1', MIN(id), 'test-resolver', 'r', 1 FROM facts

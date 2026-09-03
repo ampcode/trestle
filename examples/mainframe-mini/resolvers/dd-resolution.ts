@@ -19,11 +19,11 @@ export default resolver({
     );
     const stepsExecuting = slice.index("execution-observed", (f) => [f.props.executes as string]);
 
-    // 2. RULES — named, each with its own confidence
-    const modeRules = rules<FactRow, { edge: string; conf: number }>("access-mode", [
-      { name: "open-input", when: (f) => f.props.mode === "input", edge: "READS", conf: 0.95 },
-      { name: "open-output", when: (f) => f.props.mode === "output", edge: "WRITES", conf: 0.95 },
-      { name: "open-io", when: () => true, edge: "UPDATES", conf: 0.85 },
+    // 2. RULES — named, so every edge says which rule produced it
+    const modeRules = rules<FactRow, { edge: string }>("access-mode", [
+      { name: "open-input", when: (f) => f.props.mode === "input", edge: "READS" },
+      { name: "open-output", when: (f) => f.props.mode === "output", edge: "WRITES" },
+      { name: "open-io", when: () => true, edge: "UPDATES" },
     ]);
 
     // 3. JOIN
@@ -46,7 +46,6 @@ export default resolver({
           },
           {
             evidence: [fc, dd],
-            confidence: rule.conf,
             rule: rule.name,
             props: { ddName: target },
           },

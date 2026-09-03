@@ -174,7 +174,7 @@ distinct implementations would be destructive and wrong.
 **Discipline rule, now recorded:** `alias` is reserved for observations of
 the same concrete thing (name-form variants, PGM= vs PROGRAM-ID). Sameness
 of *meaning* across distinct things is an ordinary edge —
-`EQUIVALENT_TO` with confidence and evidence, produced by resolvers or
+`EQUIVALENT_TO` with evidence, produced by resolvers or
 answered claims — which clustering and planning can consume without the
 graph pretending two codebases are one. Corpus membership goes in node
 props via a corpus-root context the registry already passes to parsers.
@@ -190,7 +190,7 @@ No — and this is the kernel paying rent: write it down as a Git-tracked
 artifact, parsed by the decision-file parser into facts, becoming evidence
 with provenance = that file, that commit, that author. Interview knowledge
 enters the graph only by being committed to Git first — which is not a
-limitation, it's an audit trail. Confidence and supersession work unchanged
+limitation, it's an audit trail. Evidence and supersession work unchanged
 (Marge can be wrong; a later runtime fact can contradict her; both evidence
 records persist). **No kernel change, no exceptions needed.**
 

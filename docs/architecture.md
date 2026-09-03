@@ -64,7 +64,7 @@ responses reference. `defineProfile` rejects functions anywhere in the tree —
 vocabulary must evaluate to inert, serializable data; behavior belongs in
 pipeline and resolver code. TypeScript is the authoring surface because the
 whole user-space already is: the declared fact/node/edge schemas become
-inferred types in the `trestle` SDK, so `emit("call-observed", …)` with
+inferred types in the `trestle` root export, so `emit("call-observed", …)` with
 a typo'd kind or a missing required prop is a compile error in the editor,
 not a runtime rejection mid-extraction.
 
@@ -97,11 +97,13 @@ The engine knows nothing about COBOL or Java. It knows:
   is a content-derived logical key independent of storage UUIDs, enabling
   incremental refresh, snapshot diffing, and cross-revision lineage.
 - **Edge** — `(kind, from, to, props)` plus **one or more evidence records**.
-  Unlike strangler-fig (which merged evidence into a single edge row keeping
-  max confidence), Trestle stores each observation separately:
-  `(extractor, extractorVersion, sourceFile, locator, confidence, note)`,
+  Unlike strangler-fig (which merged evidence into a single edge row),
+  Trestle stores each observation separately:
+  `(fact, resolver, resolverVersion, sourceFile, locator, rule, note)`,
   where a locator is a line span, byte range, record key, or time window.
-  Merged confidence is derived at query time. Edge merge identity defaults
+  There is no confidence score: an edge exists because a named rule
+  justified it from cited evidence, or it does not exist and the
+  unresolved reference is a claim. Edge merge identity defaults
   to `(kind, from, to)`; an edge kind may declare an identity tuple of props
   (mirroring node identity) so context-distinct relationships — the same
   program reading the same dataset from two different job steps — remain
@@ -114,8 +116,8 @@ The engine knows nothing about COBOL or Java. It knows:
 
 Uncertainty is first-class: a dynamic COBOL call, an unresolved reflection
 target in Java, or an ambiguous dataset mapping stays in the graph as a
-low-confidence edge with a classification — never silently dropped, never
-promoted to fake certainty.
+claim with a classification — never silently dropped, never promoted to a
+guessed edge.
 
 ### 3.2 The fact bus
 
@@ -186,8 +188,7 @@ params)`:
   strangler-fig's insight that shared *mutable* state should weigh far more
   than shared read-only data, and that high-fan-in utility hubs must be
   discounted, becomes a default weight profile the user can override. Every
-  membership records confidence and an assignment reason so a reviewer can
-  challenge it.
+  membership records an assignment reason so a reviewer can challenge it.
 - **Scheduling DAG** — the narrow set of edge kinds that affect readiness,
   for consumers that sequence work. The rich graph keeps its dozens of edge
   kinds; scheduling sees only `depends-on` and `conflicts-with`.
@@ -331,7 +332,7 @@ Four mechanisms, in increasing order of coupling:
    **extraction pipeline** (filtering, unit assembly, tool selection,
    acquisition, transcription → facts, built on the kernel primitives
    `corpus`/`acquire`/`run`/`memo`/`emit`) and **resolvers** (all inference
-   → directives). Each side ships an SDK + template + skill so coding
+   → directives). Each side ships an API + template + skill so coding
    agents can write them quickly; the JSON contracts are the only
    requirement.
 3. **Amp skills** (`.agents/skills/`) — procedural guidance for agent roles:
@@ -519,7 +520,7 @@ but it is an escape hatch, not a documented peer mode.
   .agents/skills/              # trestle-* skills (committed) + project skills
 ```
 
-**No package boundary.** User files import the SDK by the package
+**No package boundary.** User files import the engine by the package
 self-reference (`import { pipeline, resolver } from "trestle"` — Node
 resolves the repo's own `package.json` `exports` to `./src/index.ts`, type
 stripping the source directly). The package is `"private": true`; nothing is
@@ -528,9 +529,9 @@ published. The four surfaces are repo directories, not package exports:
 1. **Runtime + CLI** — `src/` + `bin/trestle.js`:
    `trestle profile build/check | extract | resolve | survey | status |
    doctor | project | serve | corpus add`.
-2. **SDK** — the `"trestle"` self-reference: profile builders
+2. **Root export** — the `"trestle"` self-reference: profile builders
    (`defineProfile`, `t.*`), the five extraction primitives
-   (`corpus`/`acquire`/`run`/`memo`/`emit`), the resolver SDK and kit.
+   (`corpus`/`acquire`/`run`/`memo`/`emit`), the resolver API and kit.
 3. **User surface** — `profile.ts`, `extract/pipeline.ts`, `resolvers/*.ts`
    ship as small running examples (a file-inventory fact emitter, a P0
    mapping resolver) meant to be edited into the real pipeline; the
@@ -568,7 +569,7 @@ src/
   store/        # SQLite store: revisions, facts, nodes, edges, evidence, aliases,
                 #   claims, memo cells; applyDirectives (atomic revision + retirement)
   extract/      # pipeline runner: memoized cells, corpus walking, acquire/run, fact emission
-  resolve/      # resolver SDK (slice/emitter), kit (rules/mapFacts), phase-ordered runner
+  resolve/      # resolver API (slice/emitter), kit (rules/mapFacts), phase-ordered runner
   survey/       # unresolved-population report over facts/nodes/edges/claims
   check/        # doctor: graph health checks (duplicates, orphans, hygiene)
   project/      # Cypher projection (LadybugDB materializer)
@@ -589,10 +590,10 @@ programs/datasets have no remaining live inbound edges).
 **Legacy/proprietary code mapping.** The degenerate but important case:
 extraction and resolution only, orchestration optional. Tolerant island
 parsers (parse what you understand, skip the "water"), LLM-backed extractors
-as ordinary fact-emitting parsers with low-confidence evidence, Claim nodes
+as ordinary fact-emitting parsers in their own fact kinds, Claim nodes
 for human confirmation, search + graph UI as the deliverable. The evidence
-model is the product here: provenance and confidence make a partially
-understood map honest and incrementally improvable.
+model is the product here: provenance makes a partially understood map
+honest and incrementally improvable.
 
 **Java monolith modularization.** Parsers over source + bytecode + build
 files; resolvers for Spring wiring, JNDI, reflection, JPA entity→table
@@ -608,7 +609,7 @@ Adopted (with source):
 - Neutral versioned fact bus; external-process parsers *(strangler-fig)*
 - Two-stage parse → corpus-wide resolve *(strangler-fig, generalized to
   pluggable resolver passes)*
-- Multiple evidence records per edge; confidence derived at query time
+- Multiple evidence records per edge, each citing a fact and a rule
   *(strengthened from strangler-fig's single merged row)*
 - Evidence vs. projection separation; explainable membership *(strangler-fig)*
 - Relational canonical store (SQLite, single-writer, interval-versioned
@@ -640,9 +641,8 @@ Rejected:
 
 - **Incremental ingest.** The mechanism is implemented (memo-cell input
   fingerprints → surgical fact retirement; owner-scoped directive
-  retirement; delta-driven re-resolution per §2.3 of extract-resolve.md) and
-  held up on the OFBiz dogfood (~42k facts), but larger estates are
-  unproven.
+  retirement; delta-driven re-resolution per §2.3 of extract-resolve.md);
+  very large estates may need streaming resolver slices.
 - **Evidence freshness granularity.** Commit + graph revision on verification
   pointers is coarse; tying invalidation to the unit's declared scope paths is
   the pragmatic middle ground, but scope drift makes it imperfect.

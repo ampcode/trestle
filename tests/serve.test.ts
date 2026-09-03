@@ -85,7 +85,7 @@ test("serves G6VP and the live graph API", async () => {
     config: { title: string; nodes: { Program: { color: string } } };
     stats: { nodes: number; edges: number };
     nodes: { kind: string; label: string }[];
-    edges: { confidence: number; evidenceCount: number }[];
+    edges: { evidenceCount: number }[];
   };
   assert.equal(graph.initialized, true);
   assert.equal(graph.config.title, "Mainframe map");
@@ -93,7 +93,7 @@ test("serves G6VP and the live graph API", async () => {
   assert.equal(graph.stats.nodes, 6);
   assert.ok(graph.stats.edges > 0);
   assert.ok(graph.nodes.some((node) => node.kind === "Program" && node.label === "ACCT01"));
-  assert.ok(graph.edges.every((edge) => edge.confidence > 0 && edge.evidenceCount > 0));
+  assert.ok(graph.edges.every((edge) => edge.evidenceCount > 0));
 });
 
 test("visualization API can run Cypher against the projection", async () => {

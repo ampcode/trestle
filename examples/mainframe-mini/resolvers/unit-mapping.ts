@@ -30,7 +30,6 @@ export default resolver({
           to: (f) => `Program:${f.props.executes}`,
           props: (f) => ({ step: f.props.step }),
           rule: "jcl-exec",
-          confidence: 1.0,
         },
       ],
       "call-observed": [
@@ -41,7 +40,6 @@ export default resolver({
           to: (f) => `Program:${f.props.callee}`,
           props: () => ({ callType: "static" }),
           rule: "static-call",
-          confidence: 1.0,
         },
       ],
     });

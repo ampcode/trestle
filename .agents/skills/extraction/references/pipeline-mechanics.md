@@ -42,7 +42,7 @@ export default pipeline(async ({ corpus, memo, run, acquire, emit }) => {
   than emitting nothing silently.
 - `acquire(name, fetch)` — freezes a remote input once under
   `.state/artifacts/`; the only place network is allowed.
-- `emit({ kind, sourcePath, locator?, confidence?, authority?, props })` —
+- `emit({ kind, sourcePath, locator?, authority?, props })` —
   schema-checked; an undeclared kind or prop is an error (extend
   `profile.ts` first, then `trestle profile build`).
 

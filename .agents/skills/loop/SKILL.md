@@ -24,8 +24,8 @@ process at a time; a second `project query` waits up to 10s for the
 lock, so run queries sequentially rather than fanning out in parallel.
 Node kinds become node tables
 (identity fields + scalar props as columns, `provenance` for stub
-detection), edge kinds become rel tables with `confidence` and
-`evidenceCount` from the live evidence rows.
+detection), edge kinds become rel tables with `evidenceCount` from the live
+evidence rows.
 
 Facts persist: iterating on resolvers needs only `resolve` + `survey`.
 Re-run `extract` after corpus, pipeline, or profile changes. Everything is

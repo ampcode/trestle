@@ -94,7 +94,7 @@ export default resolver({
       for (const dd of matches) {
         emit.edge("WRITES",
           { from: `Program:${fc.props.program}`, to: `Dataset:${dd.props.dataset}` },
-          { evidence: [fc, dd], confidence: 0.95, rule: "assign-to-dd" });
+          { evidence: [fc, dd], rule: "assign-to-dd" });
       }
     }
   },

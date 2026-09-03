@@ -38,7 +38,6 @@ export interface EvidenceRow {
   factId?: number;
   sourcePath?: string;
   locator?: unknown;
-  confidence: number;
   resolver: string;
   rule?: string;
 }
@@ -91,7 +90,6 @@ export function makeSlice(deps: {
         factId: r.fact_id === null || r.fact_id === undefined ? undefined : Number(r.fact_id),
         sourcePath: r.source_path === null || r.source_path === undefined ? undefined : String(r.source_path),
         locator: typeof r.locator === "string" ? JSON.parse(r.locator) : undefined,
-        confidence: Number(r.confidence),
         resolver: String(r.resolver),
         rule: r.rule === null || r.rule === undefined ? undefined : String(r.rule),
       })),
@@ -103,7 +101,6 @@ export function makeSlice(deps: {
 export interface EdgeOpts {
   /** Facts (or explicit locators) backing this edge. Required: silence is not an option. */
   evidence: (FactRow | EvidenceInput)[];
-  confidence?: number;
   rule?: string;
   note?: string;
   props?: Record<string, unknown>;
@@ -112,7 +109,6 @@ export interface EdgeOpts {
 export interface NodeOpts {
   /** Facts (or explicit locators) backing this declaration. Optional but strongly encouraged. */
   evidence?: (FactRow | EvidenceInput)[];
-  confidence?: number;
   rule?: string;
   note?: string;
 }
@@ -138,7 +134,7 @@ export function makeEmitter(): { emit: Emitter; output: CollectedOutput } {
   const output: CollectedOutput = { directives: [], ignored: [] };
   const toEvidence = (e: FactRow | EvidenceInput): EvidenceInput =>
     "id" in e && "props" in e
-      ? { factId: e.id, sourcePath: e.sourcePath, locator: e.locator, confidence: e.confidence }
+      ? { factId: e.id, sourcePath: e.sourcePath, locator: e.locator }
       : (e as EvidenceInput);
   const emit: Emitter = {
     node(kind, identity, props, opts) {
@@ -148,7 +144,6 @@ export function makeEmitter(): { emit: Emitter; output: CollectedOutput } {
         identity,
         props,
         evidence: opts?.evidence?.map(toEvidence),
-        confidence: opts?.confidence,
         rule: opts?.rule,
         note: opts?.note,
       });
@@ -165,7 +160,6 @@ export function makeEmitter(): { emit: Emitter; output: CollectedOutput } {
         identity: endpoints.identity,
         props: opts.props,
         evidence: opts.evidence.map(toEvidence),
-        confidence: opts.confidence,
         rule: opts.rule,
         note: opts.note,
       });

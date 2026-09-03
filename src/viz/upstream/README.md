@@ -12,11 +12,12 @@ The complete app source and dependency lock are in `source/`. To rebuild:
 ```sh
 cp -R src/viz/upstream/source /tmp/trestle-g6vp
 cd /tmp/trestle-g6vp
+mkdir src && mv main.jsx styles.css src/   # index.html loads /src/main.jsx
 npm ci
 # G6VP's published Less imports use webpack's historical `~` prefix.
 rg -l '~antd/' node_modules --glob '*.less' | xargs sed -i 's/~antd\//antd\//g'
 npm run build
-rsync -a --delete --exclude upstream/ dist/ "$OLDPWD/src/viz/"
+rm -rf "$OLDPWD/src/viz/assets" && cp -R dist/assets dist/index.html "$OLDPWD/src/viz/"
 ```
 
 Retain `LICENSE` when redistributing the build.

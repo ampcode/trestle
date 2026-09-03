@@ -7,7 +7,6 @@ export interface EvidenceInput {
   factId?: number;
   sourcePath?: string;
   locator?: unknown;
-  confidence?: number;
 }
 
 export type Directive =
@@ -17,7 +16,6 @@ export type Directive =
       identity: Record<string, Scalar>;
       props?: Record<string, unknown>;
       evidence?: EvidenceInput[];
-      confidence?: number;
       rule?: string;
       note?: string;
     }
@@ -30,7 +28,6 @@ export type Directive =
       identity?: Record<string, Scalar>;
       props?: Record<string, unknown>;
       evidence: EvidenceInput[];
-      confidence?: number;
       rule?: string;
       note?: string;
     }

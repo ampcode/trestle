@@ -79,7 +79,7 @@ function toGraphData(snapshot) {
       target: edge.target,
       edgeType: edge.kind,
       edgeTypeKeyFromProperties: 'kind',
-      data: { ...edge.identity, ...edge.props, kind: edge.kind, confidence: edge.confidence, evidenceCount: edge.evidenceCount },
+      data: { ...edge.identity, ...edge.props, kind: edge.kind, evidenceCount: edge.evidenceCount },
     }));
   return { nodes, edges };
 }

@@ -2,8 +2,8 @@
  * Regression: memo cells that invoke run() must still skip on unchanged
  * inputs. The committed fingerprint once included run() invocation records
  * that the probe could not reconstruct without executing the cell, so every
- * tool-backed cell missed its memo forever (found dogfooding scip-java/javac
- * extraction over OFBiz).
+ * tool-backed cell missed its memo forever (seen with scip-java/javac
+ * extraction over a large Java corpus).
  */
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";

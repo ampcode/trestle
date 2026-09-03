@@ -66,7 +66,6 @@ test("profile build + extract + resolve + survey", async (t) => {
     const paths = evidence.map((e) => e.source_path).sort();
     assert.deepEqual(paths, ["ACCT01.cbl", "DAILYINV.jcl"]);
     assert.ok(evidence.every((e) => e.resolver === "dd-resolution"));
-    assert.ok(evidence.every((e) => e.confidence === 0.95));
     assert.ok(evidence.every((e) => e.rule === "open-input"));
   });
 
