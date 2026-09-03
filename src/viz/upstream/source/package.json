@@ -16,9 +16,15 @@
   "devDependencies": {
     "@vitejs/plugin-react": "4.7.0",
     "less": "^4.2.0",
-    "vite": "7.1.3"
+    "vite": "7.3.6"
   },
   "overrides": {
-    "@antv/gi-sdk": "2.4.23"
+    "@antv/gi-sdk": "2.4.23",
+    "dumi": "npm:empty-npm-package@1.0.0",
+    "nanoid": "^3.3.8",
+    "postcss": "^8.4.31",
+    "fmin": {
+      "rollup": "npm:empty-npm-package@1.0.0"
+    }
   }
 }

@@ -20,4 +20,9 @@ npm run build
 rm -rf "$OLDPWD/src/viz/assets" && cp -R dist/assets dist/index.html "$OLDPWD/src/viz/"
 ```
 
+`package.json` `overrides` prune dependencies that G6VP's packages list but
+the bundle never uses (`dumi`, a docs generator, and `fmin`'s ancient
+`rollup`) and pin `nanoid`/`postcss` to patched versions. They exist to keep
+`npm audit` clean; if a rebuild fails, check them first.
+
 Retain `LICENSE` when redistributing the build.
