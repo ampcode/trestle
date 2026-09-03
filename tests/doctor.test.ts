@@ -5,31 +5,25 @@
  */
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { runCli } from "../src/cli/main.ts";
 import { Store } from "../src/store/store.ts";
 import { runDoctor } from "../src/check/doctor.ts";
 import { profileFromLock, type ProfileLock } from "../src/profile/define.ts";
-import { readFileSync } from "node:fs";
+import { buildFixture } from "./fixture.ts";
 
-const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini");
+let repo: string;
 let stateDir: string;
 
 before(async () => {
-  stateDir = mkdtempSync(join(tmpdir(), "trestle-doctor-"));
-  const overrides = { state: stateDir };
-  await runCli(["profile", "build"], fixture, overrides);
-  await runCli(["extract"], fixture, overrides);
-  await runCli(["resolve"], fixture, overrides);
+  ({ repo, state: stateDir } = await buildFixture("doctor"));
 });
 after(() => {
-  rmSync(stateDir, { recursive: true, force: true });
+  rmSync(repo, { recursive: true, force: true });
 });
 
 function openStore(): Store {
-  const lock = JSON.parse(readFileSync(join(fixture, "profile.lock.json"), "utf8")) as ProfileLock;
+  const lock = JSON.parse(readFileSync(join(repo, "profile.lock.json"), "utf8")) as ProfileLock;
   const store = new Store(join(stateDir, "trestle.db"));
   store.activateProfile(profileFromLock(lock), lock.hash);
   return store;
@@ -54,9 +48,9 @@ test("each pathology fires its check", () => {
   const db = store.db;
   try {
     db.exec(`
-      -- near-duplicate + identity hygiene: same Program name modulo case/whitespace
+      -- near-duplicate + identity hygiene: same Module name modulo case/whitespace
       INSERT INTO nodes (kind, identity, stable_id, props, provenance, owner, created_rev)
-        VALUES ('Program', '{"name":" acct01"}', 'fake-dupe-1', '{}', 'declared', 'test', 1);
+        VALUES ('Module', '{"name":" a"}', 'fake-dupe-1', '{}', 'declared', 'test', 1);
       -- vocabulary drift: kind not in the profile
       INSERT INTO nodes (kind, identity, stable_id, props, provenance, owner, created_rev)
         VALUES ('Ghost', '{"name":"boo"}', 'fake-ghost', '{}', 'declared', 'test', 1);
@@ -68,8 +62,8 @@ test("each pathology fires its check", () => {
         VALUES ('edge', 'fake-orphan-edge', 999999, 'test-resolver', 1);
       -- duplicate facts: identical rows from two cells
       INSERT INTO facts (kind, version, cell, source_path, locator, props, created_rev)
-        VALUES ('call-observed', 1, 'cell-a', 'x.cbl', NULL, '{"callee":"Z"}', 1),
-               ('call-observed', 1, 'cell-b', 'x.cbl', NULL, '{"callee":"Z"}', 1);
+        VALUES ('call-observed', 1, 'cell-a', 'x.mod', NULL, '{"callee":"Z"}', 1),
+               ('call-observed', 1, 'cell-b', 'x.mod', NULL, '{"callee":"Z"}', 1);
       -- duplicate evidence: same entity/fact/resolver/rule twice
       INSERT INTO evidence (entity_type, entity_stable, fact_id, resolver, rule, created_rev)
         SELECT 'node', 'fake-dupe-1', MIN(id), 'test-resolver', 'r', 1 FROM facts
@@ -113,13 +107,13 @@ test("alias-unified near-duplicates are not reported", () => {
   try {
     db.exec(`
       INSERT INTO nodes (kind, identity, stable_id, props, provenance, owner, created_rev)
-        VALUES ('Program', '{"name":"ACCT01 "}', 'fake-dupe-2', '{}', 'declared', 'test', 1);
+        VALUES ('Module', '{"name":"A "}', 'fake-dupe-2', '{}', 'declared', 'test', 1);
     `);
-    const realAcct01 = (
+    const realA = (
       db
         .prepare(
-          `SELECT stable_id FROM nodes WHERE kind = 'Program'
-           AND json_extract(identity, '$.name') = 'ACCT01' AND retired_rev IS NULL`,
+          `SELECT stable_id FROM nodes WHERE kind = 'Module'
+           AND json_extract(identity, '$.name') = 'A' AND retired_rev IS NULL`,
         )
         .get() as { stable_id: string }
     ).stable_id;
@@ -128,7 +122,7 @@ test("alias-unified near-duplicates are not reported", () => {
 
     db.prepare(
       `INSERT INTO aliases (canonical_stable, alias_stable, resolver, created_rev) VALUES (?, 'fake-dupe-2', 'test-resolver', 1)`,
-    ).run(realAcct01);
+    ).run(realA);
     byId = findingsById(store);
     assert.equal(byId.get("near-duplicate-identities")!.count, 0, "alias-unified pair suppressed");
   } finally {

@@ -18,14 +18,9 @@ trestle project query 'MATCH ...'   # query it
 ```
 
 The projection is derived and disposable — rebuild it after any resolve.
-It requires the optional `@ladybugdb/core` package (`npm install
-@ladybugdb/core` in your project). The projection database admits one
-process at a time; a second `project query` waits up to 10s for the
-lock, so run queries sequentially rather than fanning out in parallel.
-Node kinds become node tables
-(identity fields + scalar props as columns, `provenance` for stub
-detection), edge kinds become rel tables with `evidenceCount` from the live
-evidence rows.
+Node kinds become node tables, edge kinds become rel tables with an
+`evidenceCount` column. It admits one process at a time, so run
+`project query` calls sequentially, not in parallel.
 
 Facts persist: iterating on resolvers needs only `resolve` + `survey`.
 Re-run `extract` after corpus, pipeline, or profile changes. Everything is
@@ -71,18 +66,9 @@ The survey is a to-do list, not a report card. It shows:
 Fix the earliest broken stage first: profile before pipeline before
 resolver. A resolver workaround for a transcription gap hardens the gap.
 
-## Where things live
+## State
 
-At the graph repo root: `profile.ts` + `profile.lock.json` (committed),
-`extract/pipeline.ts`, `resolvers/*.ts`, `trestle.config.ts`, read-only
-corpora under `corpora/`, and gitignored `.state/` (SQLite store, frozen
-artifacts). Deleting `.state/` is safe — everything regenerates from the
-corpus.
-
-Adding corpora: `trestle corpus add <git-url>` pins a shallow submodule;
-`--ref <ref>` pins a non-default branch/tag/SHA (archived repos often keep
-the application off the default branch). For non-git sources,
-`trestle corpus add <archive-url> [name] [--sha256 <hash>]` downloads,
-verifies, and extracts a tarball/zip, committing only a
-`corpora/<name>.source.json` manifest; `trestle corpus restore` refetches
-missing archive corpora on a fresh clone.
+Everything derived lives in gitignored `.state/` (SQLite store, frozen
+artifacts, projection). Deleting it is safe — it regenerates from the
+corpus. Corpora are added with `trestle corpus add` (README "Corpora"); use
+`--ref` when an archived repo keeps the application off its default branch.

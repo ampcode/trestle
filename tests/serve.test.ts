@@ -1,8 +1,8 @@
 /**
  * `trestle serve`: the MCP endpoint other threads attach through the orb
  * portal. Exercises the JSON-RPC lifecycle (initialize, tools/list,
- * tools/call), notifications, batches, and errors against the
- * mainframe-mini graph.
+ * tools/call), notifications, batches, and errors against the test
+ * fixture graph.
  */
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -11,8 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "../src/cli/main.ts";
 import { startServer, type RunningServer } from "../src/server/serve.ts";
+import { buildFixture, FIXTURE } from "./fixture.ts";
 
-const fixture = join(import.meta.dirname, "..", "examples", "mainframe-mini");
+let repo: string;
 let stateDir: string;
 let running: RunningServer;
 
@@ -33,20 +34,16 @@ const call = async (name: string, args: Record<string, unknown> = {}): Promise<{
 };
 
 before(async () => {
-  stateDir = mkdtempSync(join(tmpdir(), "trestle-serve-"));
-  const overrides = { state: stateDir };
-  await runCli(["profile", "build"], fixture, overrides);
-  await runCli(["extract"], fixture, overrides);
-  await runCli(["resolve"], fixture, overrides);
-  await runCli(["project", "build"], fixture, overrides);
+  ({ repo, state: stateDir } = await buildFixture("serve"));
+  await runCli(["project", "build"], repo, { state: stateDir });
   running = await startServer(
     {
       dbPath: join(stateDir, "trestle.db"),
       projectionPath: join(stateDir, "projection.lbug"),
-      lockPath: join(fixture, "profile.lock.json"),
+      lockPath: join(repo, "profile.lock.json"),
       visualization: {
-        title: "Mainframe map",
-        nodes: { Program: { label: "name", color: "#123456" } },
+        title: "Fixture map",
+        nodes: { Module: { label: "name", color: "#123456" } },
       },
     },
     { port: 0 },
@@ -54,7 +51,7 @@ before(async () => {
 });
 after(async () => {
   await running.close();
-  rmSync(stateDir, { recursive: true, force: true });
+  rmSync(repo, { recursive: true, force: true });
 });
 
 test("health endpoint", async () => {
@@ -82,17 +79,17 @@ test("serves G6VP and the live graph API", async () => {
   const graph = (await response.json()) as {
     initialized: boolean;
     revision: number;
-    config: { title: string; nodes: { Program: { color: string } } };
+    config: { title: string; nodes: { Module: { color: string } } };
     stats: { nodes: number; edges: number };
     nodes: { kind: string; label: string }[];
     edges: { evidenceCount: number }[];
   };
   assert.equal(graph.initialized, true);
-  assert.equal(graph.config.title, "Mainframe map");
-  assert.equal(graph.config.nodes.Program.color, "#123456");
-  assert.equal(graph.stats.nodes, 6);
+  assert.equal(graph.config.title, "Fixture map");
+  assert.equal(graph.config.nodes.Module.color, "#123456");
+  assert.equal(graph.stats.nodes, FIXTURE.nodes);
   assert.ok(graph.stats.edges > 0);
-  assert.ok(graph.nodes.some((node) => node.kind === "Program" && node.label === "ACCT01"));
+  assert.ok(graph.nodes.some((node) => node.kind === "Module" && node.label === "A"));
   assert.ok(graph.edges.every((edge) => edge.evidenceCount > 0));
 });
 
@@ -100,10 +97,10 @@ test("visualization API can run Cypher against the projection", async () => {
   const response = await fetch(`http://127.0.0.1:${running.port}/api/query`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ query: "MATCH (p:Program) RETURN p.name AS name ORDER BY name" }),
+    body: JSON.stringify({ query: "MATCH (m:Module) RETURN m.name AS name ORDER BY name" }),
   });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), [{ name: "ACCT01" }, { name: "ACCT02" }, { name: "ACCT9M" }]);
+  assert.deepEqual(await response.json(), FIXTURE.modules.map((name) => ({ name })));
 });
 
 test("MCP is exposed only at /mcp", async () => {
@@ -166,13 +163,13 @@ test("notifications get 202 and no body", async () => {
 
 test("graph_query runs Cypher against the projection", async () => {
   const { text, isError } = await call("graph_query", {
-    cypher: `MATCH (p:Program) RETURN p.name AS name ORDER BY name`,
+    cypher: `MATCH (m:Module) RETURN m.name AS name ORDER BY name`,
   });
   assert.equal(isError, false);
   const rows = JSON.parse(text) as { name: string }[];
   assert.deepEqual(
     rows.map((r) => r.name),
-    ["ACCT01", "ACCT02", "ACCT9M"],
+    FIXTURE.modules,
   );
 });
 
@@ -184,7 +181,7 @@ test("survey and status read the store per request", async () => {
   const status = await call("status");
   assert.equal(status.isError, false);
   const parsed = JSON.parse(status.text) as { nodes: number; edges: number };
-  assert.equal(parsed.nodes, 6);
+  assert.equal(parsed.nodes, FIXTURE.nodes);
 });
 
 test("tool failures are in-band isError results", async () => {

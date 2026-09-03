@@ -4,7 +4,7 @@
 estate into a typed, evidence-backed graph that coding agents and humans
 can query while planning and executing a migration.
 
-The context in this codebase helps you and your agent define the vocabulary for your knowledge graph schema (‘profiles.ts’). It then helps you select the proper AST producer or language specific parser (’extract/pipeline.ts’) to extract the raw facts. Finally in (‘resolvers/*.ts’) you define the mappings between raw facts and your vocabulary to construct the graph.
+The context in this codebase helps you and your agent define the vocabulary for your knowledge graph schema (`profile.ts`). It then helps you select the proper AST producer or language-specific parser (`extract/pipeline.ts`) to extract the raw facts. Finally, in `resolvers/*.ts` you define the mappings between raw facts and your vocabulary to construct the graph.
 
 ![Trestle graph explorer showing the Apache OFBiz order component and its dependencies](./docs/assets/ofbiz-knowledge-graph.png)
 
@@ -19,8 +19,10 @@ with 10,646 nodes and 34,916 evidence-backed edges.</sub>
 
 - Node.js **≥ 23.6** (native TypeScript execution and `node:sqlite`)
 - Git
-- Optional: [`@ladybugdb/core`](https://www.npmjs.com/package/@ladybugdb/core)
-  for the Cypher projection (`project build`/`project query`)
+
+`npm install` at the root pulls the one runtime dependency,
+[`@ladybugdb/core`](https://www.npmjs.com/package/@ladybugdb/core), for the
+Cypher projection.
 
 ## How it works
 
@@ -126,7 +128,7 @@ Trestle is designed to be driven by an agent. The repo ships:
   other threads.
 
 Point an agent at a fresh fork with a corpus added and ask it to build the
-graph. That is how every case study was produced.
+graph.
 
 ## Querying and serving
 
@@ -137,7 +139,7 @@ graph. That is how every case study was produced.
   refresh).
 - **`/mcp`** — an MCP server (`graph_query` and friends) that any MCP client
   can attach to.
-- **`/api/query`** — Cypher over the optional LadybugDB projection.
+- **`/api/query`** — Cypher over the LadybugDB projection (`project build`).
 
 Presentation lives in `trestle.config.ts`:
 
@@ -171,7 +173,7 @@ bytes to your graph repo.
 Git is the distribution channel.
 
 ```sh
-git remote add upstream https://github.com/ampcode/trestle   # once
+git remote add upstream https://github.com/ampcode/Trestle.git   # once
 git fetch upstream && git merge upstream/main
 ```
 

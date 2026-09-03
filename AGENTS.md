@@ -42,17 +42,7 @@ Before editing each surface, load its skill from `.agents/skills/`:
 - resolvers/*.ts → resolvers
 - deciding what to do next → loop
 
-## Upgrading the engine
-
-This repo is distributed by forking/cloning. Pull engine updates with git:
-
-```sh
-git remote add upstream https://github.com/ampcode/Trestle.git  # once
-git fetch upstream && git merge upstream/main
-```
-
-Your profile, pipeline, resolvers, and corpora are ordinary committed files,
-so upstream merges compose with your work like any other git history.
+Engine upgrades are a git merge from upstream; see README "Upgrading".
 
 ## Project notes
 

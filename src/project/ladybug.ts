@@ -1,6 +1,6 @@
 /**
  * LadybugDB projection: a regenerable Cypher-queryable materialization of
- * the live graph (docs/architecture.md §3.5/§7.3). The SQLite store stays the
+ * the live graph. The SQLite store stays the
  * system of record; this projection is derived, disposable, and rebuilt
  * wholesale by `trestle project build`.
  *
@@ -9,13 +9,10 @@
  * (multi-pair FROM/TO from the profile, edge props + evidenceCount
  * derived from live evidence rows).
  *
- * @ladybugdb/core is an optional peer dependency — the engine keeps zero
- * required runtime deps; importing this module without it installed fails
- * with an actionable message.
+ * @ladybugdb/core is loaded lazily so the rest of the CLI never pays for
+ * its native module.
  */
 import { existsSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
-import { join } from "node:path";
 import type { Profile } from "../profile/define.ts";
 import type { PropSchema } from "../profile/schema.ts";
 import type { Store } from "../store/store.ts";
@@ -34,24 +31,10 @@ interface LbugModule {
 }
 
 async function loadLbug(): Promise<LbugModule> {
-  // 1. Resolve relative to trestle itself (normal node_modules install).
   try {
     return (await import("@ladybugdb/core")) as unknown as LbugModule;
   } catch {
-    // fall through
-  }
-  // 2. Resolve from the invoking project. When trestle is deployed as a
-  // symlink (npm link, file: install, manual ln -s), Node resolves imports
-  // from trestle's realpath, which cannot see the host repo's node_modules.
-  // @ladybugdb/core is CJS, so createRequire from cwd covers that case.
-  try {
-    const requireFromProject = createRequire(join(process.cwd(), "package.json"));
-    return requireFromProject("@ladybugdb/core") as LbugModule;
-  } catch {
-    throw new Error(
-      `the LadybugDB projection requires the optional dependency @ladybugdb/core\n` +
-        `  install it in your trestle project: npm install @ladybugdb/core`,
-    );
+    throw new Error(`the Cypher projection needs @ladybugdb/core; run \`npm install\` at the repo root`);
   }
 }
 
