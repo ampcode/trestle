@@ -4,6 +4,10 @@
 estate into a typed, evidence-backed graph that coding agents and humans
 can query while planning and executing a migration.
 
+> [!WARNING]
+> **Unstable alpha:** Trestle is under active development. Expect breaking
+> changes to its APIs, CLI, graph format, and project structure.
+
 The context in this codebase helps you and your agent define the vocabulary for your knowledge graph schema (`profile.ts`). It then helps you select the proper AST producer or language-specific parser (`extract/pipeline.ts`) to extract the raw facts. Finally, in `resolvers/*.ts` you define the mappings between raw facts and your vocabulary to construct the graph.
 
 ![Trestle graph explorer showing the Apache OFBiz order component and its dependencies](./docs/assets/ofbiz-knowledge-graph.png)
