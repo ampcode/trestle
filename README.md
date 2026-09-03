@@ -4,7 +4,6 @@
 estate into a typed, evidence-backed graph that coding agents and humans
 can query while planning and executing a migration.
 
-> [!WARNING]
 > **Unstable alpha:** Trestle is under active development. Expect breaking
 > changes to its APIs, CLI, graph format, and project structure.
 
