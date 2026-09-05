@@ -18,6 +18,7 @@ import { extname, join, resolve, sep } from "node:path";
 import { isProfileLock, profileFromLock } from "../profile/define.ts";
 import { queryProjection } from "../project/ladybug.ts";
 import { Store } from "../store/store.ts";
+import { migration, migrationSchema } from "../store/migration.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import type { VisualizationConfig } from "../cli/config.ts";
 import { isString, isProperties, type JsonValue, type Properties } from "../profile/value.ts";
@@ -172,6 +173,26 @@ export function readVisualizationGraph(cfg: ServeConfig): VisualizationGraph {
 }
 
 export const TOOLS: ToolDef[] = [
+  {
+    name: "migration",
+    description: "Read or record migration coordination state; never spawns or controls sessions. " +
+      "Create requires id, title, objective, acceptance, scope, sourceRevision, provider and session (mandatory lead). " +
+      "Get requires id; list needs no fields. Status requires id, revision and status. " +
+      "Handoff requires id, revision, replacement provider/session, locator and description; preserves history atomically. " +
+      "Bookmark requires id, kind, description and either artifactId or provider/session/locator. " +
+      "bookmark-get takes bookmarkId and returns its pinned artifact. artifact-import takes provider, session and 1–20 artifacts; " +
+      "omit content for metadata-only retention. artifact-search accepts provider/session/kind/query/offset; artifact-get takes artifactId. " +
+      "Only import approved content; no automatic redaction. Completion and artifact contents are reported, not independently verified.",
+    inputSchema: migrationSchema,
+    async run(cfg, args) {
+      const store = new Store(cfg.dbPath);
+      try {
+        return JSON.stringify(migration(store, args), null, 2);
+      } finally {
+        store.close();
+      }
+    },
+  },
   {
     name: "graph_query",
     description:

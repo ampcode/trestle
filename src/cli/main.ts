@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { buildLock, isProfile, isProfileLock, profileFromLock, type Profile, type ProfileLock } from "../profile/define.ts";
 import { sha256 } from "../profile/canonical.ts";
 import { Store } from "../store/store.ts";
+import { migration } from "../store/migration.ts";
 import { isPipelineModule } from "../extract/pipeline.ts";
 import { runExtraction } from "../extract/run.ts";
 import { hashDirSources } from "../extract/seed.ts";
@@ -27,6 +28,8 @@ const USAGE = `trestle <command>
   resolve              run resolvers in phase order
   survey               report the resolved/unresolved population
   status               store revision + row counts
+  migration <op> [json] unit registry: create, list, get, status, handoff, bookmark
+                       traces: artifact-import, artifact-search, artifact-get, bookmark-get
   doctor [--strict]    mechanical graph-health checks (duplication, staleness, drift)
   project build        materialize the Cypher projection (LadybugDB, regenerable)
   project query <q>    run a Cypher query against the projection
@@ -42,6 +45,18 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
   }
   const [command, sub] = argv;
   switch (command) {
+    case "migration": {
+      const args: unknown = JSON.parse(argv[2] ?? "{}");
+      if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("expected JSON object");
+      const cfg = await loadConfig(cwd, overrides);
+      const store = new Store(cfg.dbPath);
+      try {
+        console.log(JSON.stringify(migration(store, { ...args, operation: sub }), null, 2));
+      } finally {
+        store.close();
+      }
+      return;
+    }
     case "corpus": {
       if (sub === "add") return corpusAdd(cwd, overrides, argv.slice(2));
       if (sub === "restore") return corpusRestore(cwd, overrides);

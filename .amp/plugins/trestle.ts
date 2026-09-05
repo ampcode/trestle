@@ -1,11 +1,11 @@
-import type { PluginAPI } from '@ampcode/plugin'
+import type { PluginAPI, ThreadMessage } from '@ampcode/plugin'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 export const description =
-	'Query remote Trestle knowledge graphs through Amp portals. trestle_auth redeems a one-time portal login URL, trestle_query runs Cypher, trestle_call reaches survey/status/doctor.'
+	'Query Trestle through Amp portals and coordinate migration units. Bind the current Amp thread as lead and bookmark verified message references without controlling session execution.'
 
 /**
  * Auth model: the portal stays private. The agent mints a one-time login URL
@@ -117,7 +117,99 @@ async function callRemote(portalUrl: unknown, tool: string, args: Record<string,
 	return text
 }
 
+function artifact(message: ThreadMessage, threadURL: string, captureText: boolean) {
+	return {
+		externalId: JSON.stringify(message.id), kind: 'message',
+		locator: JSON.stringify({ threadURL, messageID: message.id }),
+		metadata: { role: message.role, tools: message.content.flatMap(block => block.type === 'tool_use' ? [block.name] : []) },
+		...(captureText ? { content: message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n') } : {}),
+	}
+}
+
 export default function (amp: PluginAPI) {
+	amp.registerTool({
+		name: 'trestle_amp',
+		description:
+			'Connect the current Amp thread to Trestle migration coordination. ' +
+			'index lists message IDs, roles and tool names (including compacted history), without copying transcripts. ' +
+			'Set persist to store the index page; capture_text additionally retains visible text (never thinking or tool payloads). ' +
+			'create binds this thread as lead; pass title, objective, acceptance, scope and sourceRevision in arguments. ' +
+			'bookmark requires message_id and arguments.kind/description; verifies and indexes that message, then pins its artifact version. ' +
+			'handoff makes this thread the replacement lead and requires message_id plus arguments.revision/description. ' +
+			'get/list/status use the registry fields in arguments. No sessions are created, resumed or messaged.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				operation: { type: 'string', enum: ['index', 'create', 'bookmark', 'handoff', 'get', 'list', 'status'] },
+				id: { type: 'string', description: 'Migration unit ID; not needed for index/list.' },
+				message_id: { type: ['string', 'number'], description: 'Exact message ID returned by index.' },
+				offset: { type: 'integer', minimum: 0, description: 'Index offset from the start; pages contain up to 20 messages.' },
+				persist: { type: 'boolean', description: 'Persist this index page to Trestle. Default false.' },
+				capture_text: { type: 'boolean', description: 'Explicitly retain visible message text. Review for sensitive data first; no automatic redaction. Default false.' },
+				arguments: { type: 'object', description: 'Migration operation fields; provider/session/locator are supplied by the adapter.' },
+				portal_url: { type: 'string', description: 'Trestle portal; defaults to the authenticated portal.' },
+			},
+			required: ['operation'],
+		},
+		async execute(input, ctx) {
+			const operation = input.operation
+			if (!['index', 'create', 'bookmark', 'handoff', 'get', 'list', 'status'].includes(String(operation))) {
+				throw new Error('Unknown Amp adapter operation')
+			}
+			const thread = ctx.thread
+			const threadURL = `https://ampcode.com/threads/${thread.id}`
+			if (operation === 'index') {
+				const offset = input.offset ?? 0
+				if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid offset')
+				const messages = await thread.messages({ full: true, from: 'start', offset, limit: 20 })
+				let imported: unknown = undefined
+				if (input.capture_text === true && input.persist !== true) throw new Error('capture_text requires persist for index')
+				if (input.persist === true && messages.length) {
+					const response = await callRemote(input.portal_url, 'migration', {
+						operation: 'artifact-import', provider: 'amp', session: thread.id,
+						artifacts: messages.map(message => artifact(message, threadURL, input.capture_text === true)),
+					})
+					try { imported = JSON.parse(response) } catch { return response }
+				}
+				return JSON.stringify({ provider: 'amp', session: thread.id, threadURL,
+					artifacts: imported,
+					messages: messages.map(message => ({
+						id: message.id, role: message.role,
+						tools: message.content.flatMap(block => block.type === 'tool_use' ? [block.name] : []),
+					})),
+					nextOffset: messages.length === 20 ? offset + messages.length : null,
+				})
+			}
+			if (input.arguments !== undefined && (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))) {
+				throw new Error('arguments must be an object')
+			}
+			const args: Record<string, unknown> = { ...(input.arguments as Record<string, unknown> ?? {}),
+				operation, id: input.id, provider: 'amp', session: thread.id }
+			delete args.locator
+			delete args.artifactId
+			if (operation === 'bookmark' || operation === 'handoff') {
+				if (typeof input.message_id !== 'string' && typeof input.message_id !== 'number') throw new Error('message_id is required')
+				let found: ThreadMessage | undefined
+				for (let offset = 0; ; offset += 20) {
+					const page = await thread.messages({ full: true, from: 'start', offset, limit: 20 })
+					found = page.find(message => message.id === input.message_id)
+					if (found) break
+					if (page.length < 20) break
+				}
+				if (!found) throw new Error('Message not found in the current Amp thread')
+				const response = await callRemote(input.portal_url, 'migration', {
+					operation: 'artifact-import', provider: 'amp', session: thread.id,
+					artifacts: [artifact(found, threadURL, input.capture_text === true)],
+				})
+				let imported: unknown
+				try { imported = JSON.parse(response) } catch { return response }
+				if (!Array.isArray(imported) || typeof imported[0]?.id !== 'string') throw new Error('Invalid artifact import response')
+				args.artifactId = imported[0].id
+			}
+			return callRemote(input.portal_url, 'migration', args)
+		},
+	})
+
 	amp.registerTool({
 		name: 'trestle_auth',
 		description:
@@ -164,11 +256,13 @@ export default function (amp: PluginAPI) {
 		name: 'trestle_call',
 		description:
 			'Call any other tool on a remote Trestle graph server: survey (unresolved work), status (counts), ' +
-			'doctor (graph health checks). Uses the default portal unless portal_url is given.',
+			'doctor (graph health checks), migration (provider-neutral coordination and artifacts). ' +
+			'For migration, arguments.operation can be artifact-search (query/provider/session/kind/offset), ' +
+			'artifact-get (artifactId), or bookmark-get (bookmarkId). Uses the default portal unless portal_url is given.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				tool: { type: 'string', description: 'Remote tool name: survey, status, or doctor' },
+				tool: { type: 'string', description: 'Remote tool name: survey, status, doctor, or migration' },
 				arguments: { type: 'object', description: 'Arguments for the remote tool (optional)' },
 				portal_url: { type: 'string', description: 'Portal URL of the trestle serve endpoint (optional)' },
 			},
