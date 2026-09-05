@@ -23,6 +23,11 @@ Commit the regenerated assets alongside source changes.
 Vite resolves G6VP's historical `~antd/` Less imports with an alias; no
 dependency files are patched and no source files need to be moved.
 
+The first import in `main.jsx` initializes English in `locale.js`, before
+G6VP's widgets evaluate their translated metadata. Keep this ordering:
+setting the language after importing the widgets leaves layout names in
+Chinese. When changing the integration, check opened menus as well as the canvas.
+
 Root `npm test` rebuilds the app before exercising the server's asset and
 API tests. Root `npm run typecheck` checks both the engine and the JSX app
 (without replacing served assets). Both commands install the locked

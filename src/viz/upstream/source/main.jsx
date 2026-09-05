@@ -1,3 +1,4 @@
+import './locale.js';
 import React, { useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom';
 import GISDK, { useContext as useGIContext } from '@antv/gi-sdk';
