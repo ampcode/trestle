@@ -15,14 +15,19 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "node --test 'tests/*.test.ts'",
-    "typecheck": "tsc --noEmit"
+    "build:viz": "node src/viz/upstream/build.js",
+    "prelint": "node .agents/skills/installing-anti-slop/scripts/install.mjs --force",
+    "lint": "oxlint .",
+    "test": "npm run build:viz && node --test 'tests/*.test.ts'",
+    "typecheck": "tsc --noEmit && node src/viz/upstream/build.js --check"
   },
   "dependencies": {
     "@ladybugdb/core": "^0.19.1"
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.81.0",
     "@types/node": "^24.0.0",
+    "oxlint": "1.81.0",
     "typescript": "^5.8.0"
   }
 }

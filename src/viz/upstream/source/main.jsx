@@ -7,6 +7,8 @@ import '@antv/gi-sdk/dist/index.css';
 import '@antv/gi-assets-basic/dist/index.css';
 import './styles.css';
 
+/** @typedef {import('../../../server/serve.ts').VisualizationGraph} VisualizationGraph */
+
 const PALETTE = ['#7c5cff', '#00c2ff', '#ff4ecd', '#ffb547', '#55d6a5', '#ff6b6b', '#8f9bb3', '#6fddff'];
 const SERVICE_GRAPH = 'Trestle/GI_SERVICE_INTIAL_GRAPH';
 const SERVICE_SCHEMA = 'Trestle/GI_SERVICE_SCHEMA';
@@ -28,7 +30,9 @@ function AutoFit() {
   return null;
 }
 
-const assets = {
+// gi-assets-basic's published declarations disagree with gi-sdk on asset
+// metadata and registration signatures. Keep the compatibility cast here.
+const assets = /** @type {import('@antv/gi-sdk').GIAssets} */ (/** @type {unknown} */ ({
   components: {
     AutoFit: { info: { id: 'AutoFit', name: 'Fit graph after layout', type: 'AUTO', category: 'canvas-interaction', icon: '' }, component: AutoFit },
     Initializer: components.Initializer,
@@ -59,8 +63,9 @@ const assets = {
     Circular: layouts.Circular,
     FundForce: layouts.FundForce,
   },
-};
+}));
 
+/** @param {VisualizationGraph} snapshot */
 function toGraphData(snapshot) {
   const hiddenNodes = new Set(Object.entries(snapshot.config.nodes || {}).filter(([, style]) => style.hidden).map(([kind]) => kind));
   const hiddenEdges = new Set(Object.entries(snapshot.config.edges || {}).filter(([, style]) => style.hidden).map(([kind]) => kind));
@@ -84,6 +89,7 @@ function toGraphData(snapshot) {
   return { nodes, edges };
 }
 
+/** @param {VisualizationGraph} snapshot @param {'nodes' | 'edges'} target */
 function styleConfigs(snapshot, target) {
   const kinds = [...new Set(snapshot[target].map(item => item.kind))].sort();
   const configured = snapshot.config[target] || {};
@@ -98,8 +104,8 @@ function styleConfigs(snapshot, target) {
   return [base, ...kinds.filter(kind => !configured[kind]?.hidden).map((kind, index) => ({
     id: isNode ? 'SimpleNode' : 'SimpleEdge',
     props: isNode
-      ? { size: 30 * (configured[kind]?.size || 1), color: configured[kind]?.color || PALETTE[index % PALETTE.length], label: [`${kind}^^label`], advanced: { label: { fill: '#dce6ff', fontSize: 12 } } }
-      : { size: configured[kind]?.width || 1.5, color: configured[kind]?.color || '#53617f', label: [`${kind}^^kind`] },
+      ? { size: 30 * (snapshot.config.nodes?.[kind]?.size || 1), color: configured[kind]?.color || PALETTE[index % PALETTE.length], label: [`${kind}^^label`], advanced: { label: { fill: '#dce6ff', fontSize: 12 } } }
+      : { size: snapshot.config.edges?.[kind]?.width || 1.5, color: configured[kind]?.color || '#53617f', label: [`${kind}^^kind`] },
     expressions: [{ name: 'kind', operator: 'eql', value: kind }],
     logic: true, groupName: kind, order: index,
   }))];
@@ -109,8 +115,10 @@ function giac(title, icon, tooltip = title) {
   return { GI_CONTAINER_INDEX: 2, GIAC: { visible: false, disabled: false, isShowTitle: false, title, isShowIcon: true, icon, isShowTooltip: true, tooltip, tooltipColor: '#7c5cff', tooltipPlacement: 'right', hasDivider: false, height: '42px', isVertical: true } };
 }
 
+/** @param {VisualizationGraph} snapshot @returns {import('@antv/gi-sdk').GIConfig} */
 function createConfig(snapshot) {
   return {
+    pageLayout: undefined, // Use the SDK's default canvas layout.
     nodes: styleConfigs(snapshot, 'nodes'),
     edges: styleConfigs(snapshot, 'edges'),
     layout: { id: 'Dagre', props: { type: 'dagre', rankdir: 'LR', nodesep: 70, ranksep: 130, controlPoints: true } },
@@ -137,7 +145,7 @@ function createConfig(snapshot) {
 }
 
 function App() {
-  const [snapshot, setSnapshot] = useState(null);
+  const [snapshot, setSnapshot] = useState(/** @type {VisualizationGraph | null} */ (null));
   const [error, setError] = useState('');
   useEffect(() => {
     fetch('/api/graph').then(async response => {
@@ -147,7 +155,7 @@ function App() {
   }, []);
   const graphData = useMemo(() => snapshot ? toGraphData(snapshot) : null, [snapshot]);
   const config = useMemo(() => snapshot ? createConfig(snapshot) : null, [snapshot]);
-  const services = useMemo(() => graphData ? [
+  const services = useMemo(/** @returns {import('@antv/gi-sdk').GIService[]} */ () => graphData ? [
     { id: SERVICE_GRAPH, name: 'Trestle graph', method: 'GET', service: async () => graphData },
     { id: SERVICE_SCHEMA, name: 'Trestle schema', method: 'GET', service: async () => null },
     { id: SERVICE_PROPERTIES, name: 'Trestle entity details', method: 'GET', service: async model => model },

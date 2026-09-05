@@ -15,12 +15,14 @@ export function computeSurvey(store: Store): Survey {
   return {
     revision: store.currentRevision(),
     facts: store.factCounts(),
+    // SAFETY: kind/provenance are NOT NULL TEXT; COUNT returns a number with SQLite's default integer mode.
     nodes: db
       .prepare(
         `SELECT kind, provenance, COUNT(*) AS count FROM nodes WHERE retired_rev IS NULL
          GROUP BY kind, provenance ORDER BY kind, provenance`,
       )
       .all() as Survey["nodes"],
+    // SAFETY: kind is NOT NULL TEXT and both aggregate aliases are COUNTs (numbers, including zero).
     edges: db
       .prepare(
         `SELECT e.kind, COUNT(DISTINCT e.id) AS count, COUNT(ev.id) AS evidence
@@ -28,12 +30,14 @@ export function computeSurvey(store: Store): Survey {
          WHERE e.retired_rev IS NULL GROUP BY e.kind ORDER BY count DESC`,
       )
       .all() as Survey["edges"],
+    // SAFETY: kind is NOT NULL TEXT and COUNT is returned as a number.
     claims: db
       .prepare(
         `SELECT kind, COUNT(*) AS count FROM claims WHERE status = 'open' AND retired_rev IS NULL
          GROUP BY kind ORDER BY count DESC`,
       )
       .all() as Survey["claims"],
+    // SAFETY: node kind/identity are NOT NULL TEXT; COUNT(e.id) is numeric even without joined edges.
     stubs: (
       db
         .prepare(

@@ -2,3 +2,9 @@ node_modules/
 *.tsbuildinfo
 .state/
 .amp/portals/
+src/viz/upstream/source/dist/
+
+# Recreated from the versioned skill assets by npm run lint.
+/tools/oxlint/anti-slop/*
+!/tools/oxlint/anti-slop/README.md
+!/tools/oxlint/anti-slop/LICENSE

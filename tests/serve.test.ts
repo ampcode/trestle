@@ -11,13 +11,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "../src/cli/main.ts";
 import { startServer, type RunningServer } from "../src/server/serve.ts";
+import { isBoolean, isNumber, isProperties, isString, type JsonValue, type Properties } from "../src/profile/value.ts";
 import { buildFixture, FIXTURE } from "./fixture.ts";
 
 let repo: string;
 let stateDir: string;
 let running: RunningServer;
 
-const rpc = async (body: unknown): Promise<{ status: number; json: unknown }> => {
+function expectObject(value: JsonValue): Properties {
+  assert.ok(isProperties(value), "expected a JSON object");
+  return value;
+}
+
+function expectArray(value: JsonValue): JsonValue[] {
+  assert.ok(Array.isArray(value), "expected a JSON array");
+  return value;
+}
+
+const rpc = async (body: JsonValue): Promise<{ status: number; json: JsonValue }> => {
   const res = await fetch(`http://127.0.0.1:${running.port}/mcp`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -27,10 +38,13 @@ const rpc = async (body: unknown): Promise<{ status: number; json: unknown }> =>
   return { status: res.status, json: text === "" ? undefined : JSON.parse(text) };
 };
 
-const call = async (name: string, args: Record<string, unknown> = {}): Promise<{ text: string; isError: boolean }> => {
+const call = async (name: string, args: Properties = {}): Promise<{ text: string; isError: boolean }> => {
   const { json } = await rpc({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
-  const result = (json as { result: { content: { text: string }[]; isError: boolean } }).result;
-  return { text: result.content[0]!.text, isError: result.isError };
+  const result = expectObject(expectObject(json).result);
+  const text = expectObject(expectArray(result.content)[0]).text;
+  assert.ok(isString(text));
+  assert.ok(isBoolean(result.isError));
+  return { text, isError: result.isError };
 };
 
 before(async () => {
@@ -73,24 +87,39 @@ test("serves G6VP and the live graph API", async () => {
   const applicationSource = await application.text();
   assert.ok(applicationSource.length > 1_000_000, "serves the G6VP application");
   assert.match(applicationSource, /GI_SDK_VERSION/);
+  // Preload hints must follow the icon set used by the pinned SDK bundle.
+  assert.match(applicationSource, /font_3381398_i824ocozt7/);
+  assert.equal(application.headers.get("link"), null);
+
+  const icons = "https://at.alicdn.com/t/a/font_3381398_i824ocozt7";
+  assert.deepEqual(root.headers.get("link")?.split(", "), [
+    "</api/graph>; rel=preload; as=fetch; crossorigin",
+    `<${icons}.js>; rel=preload; as=script`,
+    `<${icons}.json>; rel=preload; as=fetch; crossorigin`,
+    ...["woff2", "woff", "ttf"].map(ext => `<${icons}.${ext}>; rel=preload; as=font; crossorigin`),
+  ]);
 
   const response = await fetch(`http://127.0.0.1:${running.port}/api/graph`);
   assert.equal(response.status, 200);
-  const graph = (await response.json()) as {
-    initialized: boolean;
-    revision: number;
-    config: { title: string; nodes: { Module: { color: string } } };
-    stats: { nodes: number; edges: number };
-    nodes: { kind: string; label: string }[];
-    edges: { evidenceCount: number }[];
-  };
+  assert.equal(response.headers.get("link"), null);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const graph = await response.json();
+  assert.ok(isProperties(graph));
   assert.equal(graph.initialized, true);
-  assert.equal(graph.config.title, "Fixture map");
-  assert.equal(graph.config.nodes.Module.color, "#123456");
-  assert.equal(graph.stats.nodes, FIXTURE.nodes);
-  assert.ok(graph.stats.edges > 0);
-  assert.ok(graph.nodes.some((node) => node.kind === "Module" && node.label === "A"));
-  assert.ok(graph.edges.every((edge) => edge.evidenceCount > 0));
+  const config = expectObject(graph.config);
+  assert.equal(config.title, "Fixture map");
+  assert.equal(expectObject(expectObject(config.nodes).Module).color, "#123456");
+  const stats = expectObject(graph.stats);
+  assert.equal(stats.nodes, FIXTURE.nodes);
+  assert.ok(isNumber(stats.edges) && stats.edges > 0);
+  assert.ok(expectArray(graph.nodes).some((value) => {
+    const node = expectObject(value);
+    return node.kind === "Module" && node.label === "A";
+  }));
+  assert.ok(expectArray(graph.edges).every((value) => {
+    const edge = expectObject(value);
+    return isNumber(edge.evidenceCount) && edge.evidenceCount > 0;
+  }));
 });
 
 test("visualization API can run Cypher against the projection", async () => {
@@ -128,10 +157,11 @@ test("starts before the profile exists and reports an initialization state", asy
   try {
     const response = await fetch(`http://127.0.0.1:${emptyServer.port}/api/graph`);
     assert.equal(response.status, 200);
-    const graph = (await response.json()) as { initialized: boolean; nodes: unknown[]; config: { title: string } };
+    const graph = await response.json();
+    assert.ok(isProperties(graph));
     assert.equal(graph.initialized, false);
     assert.deepEqual(graph.nodes, []);
-    assert.equal(graph.config.title, "Empty graph");
+    assert.equal(expectObject(graph.config).title, "Empty graph");
   } finally {
     await emptyServer.close();
     rmSync(emptyDir, { recursive: true, force: true });
@@ -146,12 +176,12 @@ test("initialize negotiates protocol and advertises tools", async () => {
     params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "0" } },
   });
   assert.equal(status, 200);
-  const result = (json as { result: Record<string, unknown> }).result;
+  const result = expectObject(expectObject(json).result);
   assert.equal(result.protocolVersion, "2025-03-26");
   assert.deepEqual(result.capabilities, { tools: {} });
 
   const list = await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  const tools = (list.json as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+  const tools = expectArray(expectObject(expectObject(list.json).result).tools).map((t) => expectObject(t).name);
   assert.deepEqual(tools.sort(), ["doctor", "graph_query", "status", "survey"]);
 });
 
@@ -166,9 +196,9 @@ test("graph_query runs Cypher against the projection", async () => {
     cypher: `MATCH (m:Module) RETURN m.name AS name ORDER BY name`,
   });
   assert.equal(isError, false);
-  const rows = JSON.parse(text) as { name: string }[];
+  const rows = expectArray(JSON.parse(text));
   assert.deepEqual(
-    rows.map((r) => r.name),
+    rows.map((r) => expectObject(r).name),
     FIXTURE.modules,
   );
 });
@@ -180,7 +210,7 @@ test("survey and status read the store per request", async () => {
 
   const status = await call("status");
   assert.equal(status.isError, false);
-  const parsed = JSON.parse(status.text) as { nodes: number; edges: number };
+  const parsed = expectObject(JSON.parse(status.text));
   assert.equal(parsed.nodes, FIXTURE.nodes);
 });
 
@@ -194,10 +224,10 @@ test("tool failures are in-band isError results", async () => {
 
 test("protocol errors: unknown method, unknown tool, parse error, batch", async () => {
   const unknown = await rpc({ jsonrpc: "2.0", id: 9, method: "no/such" });
-  assert.equal((unknown.json as { error: { code: number } }).error.code, -32601);
+  assert.equal(expectObject(expectObject(unknown.json).error).code, -32601);
 
   const badTool = await rpc({ jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "nope" } });
-  assert.equal((badTool.json as { error: { code: number } }).error.code, -32602);
+  assert.equal(expectObject(expectObject(badTool.json).error).code, -32602);
 
   const res = await fetch(`http://127.0.0.1:${running.port}/mcp`, {
     method: "POST",
@@ -212,5 +242,5 @@ test("protocol errors: unknown method, unknown tool, parse error, batch", async 
     { jsonrpc: "2.0", id: 2, method: "tools/list" },
   ]);
   assert.equal(batch.status, 200);
-  assert.equal((batch.json as unknown[]).length, 2); // notification excluded
+  assert.equal(expectArray(batch.json).length, 2); // notification excluded
 });

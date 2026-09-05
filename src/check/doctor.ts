@@ -33,7 +33,7 @@ export interface DoctorReport {
 const SAMPLE_LIMIT = 5;
 
 /** Normalization used only to *detect* near-duplicates, never to rewrite. */
-function normalizeScalar(v: unknown): string {
+function normalizeScalar(v: string | number | boolean): string {
   return String(v).trim().toLowerCase().replaceAll("\\", "/").replace(/\s+/g, " ");
 }
 
@@ -62,7 +62,7 @@ export function runDoctor(store: Store): DoctorReport {
            NOT EXISTS (SELECT 1 FROM nodes n WHERE n.stable_id = e.from_stable AND n.retired_rev IS NULL)
            OR NOT EXISTS (SELECT 1 FROM nodes n WHERE n.stable_id = e.to_stable AND n.retired_rev IS NULL))`,
       )
-      .all() as { kind: string; stable_id: string }[];
+      .all();
     add(
       "orphan-edges",
       "error",
@@ -80,7 +80,7 @@ export function runDoctor(store: Store): DoctorReport {
          WHERE ev.retired_rev IS NULL AND ev.fact_id IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.id = ev.fact_id AND f.retired_rev IS NULL)`,
       )
-      .all() as { entity_type: string; entity_stable: string; resolver: string }[];
+      .all();
     add(
       "stale-evidence",
       "error",
@@ -94,6 +94,7 @@ export function runDoctor(store: Store): DoctorReport {
   {
     const drifted: string[] = [];
     const kindsOf = (table: string): string[] =>
+      // SAFETY: nodes, edges and facts declare kind as NOT NULL TEXT; SELECT preserves that column.
       (db.prepare(`SELECT DISTINCT kind FROM ${table} WHERE retired_rev IS NULL`).all() as { kind: string }[]).map(
         (r) => r.kind,
       );
@@ -124,6 +125,7 @@ export function runDoctor(store: Store): DoctorReport {
     const union = (a: string, b: string): void => {
       canon.set(find(a), find(b));
     };
+    // SAFETY: both selected alias columns are NOT NULL TEXT in the store schema.
     const aliasRows = db
       .prepare(`SELECT canonical_stable, alias_stable FROM aliases WHERE retired_rev IS NULL`)
       .all() as { canonical_stable: string; alias_stable: string }[];
@@ -165,7 +167,7 @@ export function runDoctor(store: Store): DoctorReport {
         `SELECT e.kind, e.stable_id FROM edges e WHERE e.retired_rev IS NULL AND NOT EXISTS
            (SELECT 1 FROM evidence ev WHERE ev.entity_stable = e.stable_id AND ev.retired_rev IS NULL)`,
       )
-      .all() as { kind: string; stable_id: string }[];
+      .all();
     add(
       "edges-without-evidence",
       "warn",
@@ -179,7 +181,7 @@ export function runDoctor(store: Store): DoctorReport {
         `SELECT n.kind, n.identity FROM nodes n WHERE n.retired_rev IS NULL AND n.provenance = 'declared'
            AND NOT EXISTS (SELECT 1 FROM evidence ev WHERE ev.entity_stable = n.stable_id AND ev.retired_rev IS NULL)`,
       )
-      .all() as { kind: string; identity: string }[];
+      .all();
     add(
       "declared-nodes-without-evidence",
       "warn",
@@ -197,7 +199,7 @@ export function runDoctor(store: Store): DoctorReport {
          WHERE retired_rev IS NULL GROUP BY kind, source_path, IFNULL(locator, ''), props
          HAVING COUNT(*) > 1`,
       )
-      .all() as { kind: string; source_path: string; copies: number; cells: number }[];
+      .all();
     add(
       "duplicate-facts",
       "warn",
@@ -216,7 +218,7 @@ export function runDoctor(store: Store): DoctorReport {
          GROUP BY entity_stable, IFNULL(fact_id, -1), resolver, IFNULL(rule, ''), IFNULL(source_path, ''), IFNULL(locator, '')
          HAVING COUNT(*) > 1`,
       )
-      .all() as { entity_stable: string; resolver: string; copies: number }[];
+      .all();
     add(
       "duplicate-evidence",
       "warn",
@@ -252,7 +254,7 @@ export function runDoctor(store: Store): DoctorReport {
            NOT EXISTS (SELECT 1 FROM nodes n WHERE n.stable_id = a.canonical_stable AND n.retired_rev IS NULL)
            OR NOT EXISTS (SELECT 1 FROM nodes n WHERE n.stable_id = a.alias_stable AND n.retired_rev IS NULL))`,
       )
-      .all() as { canonical_stable: string; alias_stable: string }[];
+      .all();
     add(
       "dangling-aliases",
       "warn",

@@ -41,8 +41,24 @@ Before editing each surface, load its skill from `.agents/skills/`:
 - extract/pipeline.ts, choosing parsers/indexers → extraction
 - resolvers/*.ts → resolvers
 - deciding what to do next → loop
+- installing/updating anti-slop lint rules → installing-anti-slop
 
 Engine upgrades are a git merge from upstream; see README "Upgrading".
+
+## Linting
+
+- Run `npm run lint` for Oxlint with all generic anti-slop rules enabled.
+  Configuration lives in `oxlint.config.ts`; vendored rule provenance and
+  upgrade notes are in `tools/oxlint/anti-slop/README.md`.
+  Its `prelint` hook regenerates gitignored rule modules from the versioned
+  installer skill assets; do not edit the generated copy.
+- Keep lint clean without disabling rules or adding blanket suppressions.
+  Run `npm run typecheck` and `npm test` alongside lint; both check the JSX
+  app, and tests rebuild its bundled assets.
+- JSON properties use `Properties`/`JsonValue` from `src/profile/value.ts`
+  (also exported by `trestle`). Narrow external inputs at the boundary;
+  use owner-specific contracts for SQLite query results. A necessary cast
+  must state its actual invariant in a nearby `SAFETY:` comment.
 
 ## Project notes
 

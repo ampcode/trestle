@@ -11,7 +11,9 @@ does each definition fact declare?" (`unit-mapping`), "which dataset does
 each DD binding reach?" (`dd-resolution`), "which component owns each
 class?" (`component-ownership`). One question per resolver — the engine
 runs them in `phase` order and handles retirement, so each run must produce
-the resolver's entire answer (idempotence is free; partial output is a bug).
+the resolver's entire answer; partial output is a bug. Current node/edge
+upserts enrich existing properties: omitting a property does not retract
+it. Do not assume resolving is a fresh projection of the facts.
 
 The hard boundary: **resolvers never read artifacts.** Missing information
 means a pipeline gap — add a fact kind, don't work around it here.
@@ -56,7 +58,9 @@ export default resolver({
   run(slice, emit) {
     mapFacts(slice, emit, {
       "service-defined": [
-        { node: (f) => ({ kind: "Service", identity: { name: f.props.name as string } }),
+        { node: (f) => ({ kind: "Service",
+            // SAFETY: this fact kind declares name as required t.string(), validated at insertion.
+            identity: { name: f.props.name as string } }),
           rule: "service-node" },
         // edge rows: { edge, from(f), to(f), identity?(f), rule, props?(f) }
       ],
@@ -72,9 +76,11 @@ export default resolver({
   name: "dd-resolution", phase: 20,
   consumes: { facts: ["binding-observed"] },
   run(slice, emit) {
+    // SAFETY: the profile requires string ddName on the DD facts selected by this branch.
     const dd = slice.index("binding-observed",
       (f) => f.props.bindingKind === "dd" ? [f.props.ddName as string] : null);
     for (const fc of slice.facts("binding-observed").where((f) => f.props.bindingKind === "file-control")) {
+      // SAFETY: the profile requires string assignTarget on these file-control facts.
       const matches = dd.get([fc.props.assignTarget as string]);
       if (matches.length === 0) {
         emit.claim("dd-unbound", { about: [fc.props.assignTarget],
@@ -108,3 +114,9 @@ export default resolver({
   locator.
 - Per-rule branching: `rules("set", [{ name, when, ... }])`
   then `.require(x)` / `.apply(x)`.
+- Fact and entity props use `Properties` (`JsonValue` values), not a
+  fact-kind-specific generated type. Use inference for emitted props.
+  When narrowing a fact prop to an identity or index key, justify a cast
+  with the actual profile schema, as above; if that schema does not
+  guarantee the value, validate it instead. Run `npm run lint` alongside
+  typechecking so copied resolver examples stay compatible with anti-slop.

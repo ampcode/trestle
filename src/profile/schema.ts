@@ -7,6 +7,7 @@
  * strips them to plain `PropSchema` objects before hashing, so the
  * "no functions in the profile tree" rule applies to user values only.
  */
+import { isBoolean, isProperties, isString, type JsonValue } from "./value.ts";
 
 export type PropSchema =
   | { t: "string"; optional?: boolean; indexed?: boolean }
@@ -16,7 +17,27 @@ export type PropSchema =
   | { t: "array"; items: PropSchema; optional?: boolean }
   | { t: "json"; optional?: boolean };
 
-export interface TypeBuilder<T = unknown> {
+/** Validate inert schema data after decoding its JSON value tree. */
+export function isPropSchema(value: JsonValue): value is PropSchema {
+  if (!isProperties(value)) return false;
+  if (value.optional !== undefined && !isBoolean(value.optional)) return false;
+  if (value.indexed !== undefined && !isBoolean(value.indexed)) return false;
+  switch (value.t) {
+    case "string":
+    case "number":
+    case "boolean":
+    case "json":
+      return true;
+    case "enum":
+      return Array.isArray(value.values) && value.values.every(isString);
+    case "array":
+      return isPropSchema(value.items);
+    default:
+      return false;
+  }
+}
+
+export interface TypeBuilder<T = JsonValue> {
   readonly __trestleSchema: PropSchema;
   /** Marks the prop as omittable. */
   optional(): TypeBuilder<T | undefined>;
@@ -34,7 +55,7 @@ function builder<T>(schema: PropSchema): TypeBuilder<T> {
       if (schema.t === "boolean" || schema.t === "array" || schema.t === "json") {
         throw new Error(`t.${schema.t}() cannot be indexed`);
       }
-      return builder<T>({ ...schema, indexed: true } as PropSchema);
+      return builder<T>({ ...schema, indexed: true });
     },
   };
 }
@@ -45,9 +66,9 @@ export const t = {
   boolean: () => builder<boolean>({ t: "boolean" }),
   enum: <const V extends readonly [string, ...string[]]>(...values: V) =>
     builder<V[number]>({ t: "enum", values: [...values] }),
-  array: (items: TypeBuilder) => builder<unknown[]>({ t: "array", items: items.__trestleSchema }),
+  array: <T>(items: TypeBuilder<T>) => builder<T[]>({ t: "array", items: items.__trestleSchema }),
   /** Arbitrary JSON-serializable value; escape hatch, validated only for serializability. */
-  json: () => builder<unknown>({ t: "json" }),
+  json: () => builder<JsonValue>({ t: "json" }),
 };
 
 export function isBuilder(v: unknown): v is TypeBuilder {

@@ -144,6 +144,12 @@ graph.
   can attach to.
 - **`/api/query`** — Cypher over the LadybugDB projection (`project build`).
 
+The explorer is already bundled. Its HTML response includes preload hints
+for `/api/graph` and the pinned G6VP icon resources, so high-latency clients
+can fetch them alongside the app instead of waiting for JavaScript execution.
+These are serving-time headers; production build files are unchanged. The
+icon hints must stay aligned with the SDK's icon set when upgrading it.
+
 Presentation lives in `trestle.config.ts`:
 
 ```ts
@@ -170,6 +176,24 @@ npx trestle corpus restore                                          # refetch ar
 Git corpora are pinned by submodule SHA; archive corpora are pinned by a
 committed `corpora/<name>.source.json` manifest. Neither commits corpus
 bytes to your graph repo.
+
+## Development checks
+
+```sh
+npm run lint       # Oxlint + all 15 generic dmmulroy/anti-slop rules
+npm run typecheck  # engine and JSX app
+npm test           # rebuild the UI, then run the test suite
+```
+
+Anti-slop's source and installer are versioned in
+`.agents/skills/installing-anti-slop/`. `npm run lint` first regenerates
+the gitignored rule modules under `tools/oxlint/anti-slop/`, without a
+network fetch. Lint includes application code and tests, but excludes
+corpora, generated bundles, and vendored tools.
+All rules remain errors; runtime `typeof` checks are allowed only inside
+explicit type guards. JSON payloads use the shared `JsonValue`/`Properties`
+contracts, while SQLite reads use schema-specific row types. See the
+[vendoring and orb setup notes](./tools/oxlint/anti-slop/README.md).
 
 ## Upgrading
 

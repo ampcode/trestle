@@ -15,6 +15,7 @@ export { defineProfile } from "./profile/define.ts";
 export type { Profile, ProfileSpec, NodeKindSpec, EdgeKindSpec, FactKindSpec } from "./profile/define.ts";
 export { t } from "./profile/schema.ts";
 export type { TypeBuilder, PropSchema } from "./profile/schema.ts";
+export type { JsonValue, Properties } from "./profile/value.ts";
 
 export { pipeline } from "./extract/pipeline.ts";
 export type { PipelineCtx, PipelineFn, Corpus } from "./extract/pipeline.ts";

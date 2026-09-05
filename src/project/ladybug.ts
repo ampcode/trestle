@@ -13,26 +13,17 @@
  * its native module.
  */
 import { existsSync, rmSync } from "node:fs";
+import type { Connection, Database, LbugValue } from "@ladybugdb/core";
 import type { Profile } from "../profile/define.ts";
 import type { PropSchema } from "../profile/schema.ts";
+import { isNumber, type JsonValue } from "../profile/value.ts";
 import type { Store } from "../store/store.ts";
 
-interface LbugQueryResult {
-  getAll(): Promise<Record<string, unknown>[]>;
-  close(): void;
-}
-
-interface LbugModule {
-  Database: new (path: string) => { close(): Promise<void> };
-  Connection: new (db: unknown) => {
-    query(cypher: string): Promise<LbugQueryResult>;
-    close(): Promise<void>;
-  };
-}
+type LbugModule = Pick<typeof import("@ladybugdb/core"), "Database" | "Connection">;
 
 async function loadLbug(): Promise<LbugModule> {
   try {
-    return (await import("@ladybugdb/core")) as unknown as LbugModule;
+    return await import("@ladybugdb/core");
   } catch {
     throw new Error(`the Cypher projection needs @ladybugdb/core; run \`npm install\` at the repo root`);
   }
@@ -59,8 +50,8 @@ function ident(name: string): string {
  * the next open.
  */
 interface Handle {
-  conn: InstanceType<LbugModule["Connection"]>;
-  db: InstanceType<LbugModule["Database"]>;
+  conn: Connection;
+  db: Database;
 }
 
 async function closeHandle(handle: Handle): Promise<void> {
@@ -79,20 +70,22 @@ async function closeHandle(handle: Handle): Promise<void> {
 /** Run a statement and discard the result, closing it deterministically. */
 async function exec(handle: Handle, cypher: string): Promise<void> {
   const res = await handle.conn.query(cypher);
-  res.close();
+  for (const result of Array.isArray(res) ? res : [res]) result.close();
 }
 
 /** Run a query and return all rows, closing the result deterministically. */
-async function all(handle: Handle, cypher: string): Promise<Record<string, unknown>[]> {
+async function all(handle: Handle, cypher: string): Promise<Record<string, LbugValue>[]> {
   const res = await handle.conn.query(cypher);
+  const results = Array.isArray(res) ? res : [res];
   try {
-    return await res.getAll();
+    if (results.length !== 1) throw new Error("projection queries must contain one statement");
+    return await results[0]!.getAll();
   } finally {
-    res.close();
+    for (const result of results) result.close();
   }
 }
 
-function isLockError(err: unknown): boolean {
+function isLockError(err: unknown): err is Error {
   return err instanceof Error && err.message.includes("Could not set lock");
 }
 
@@ -146,10 +139,10 @@ function columnType(schema: PropSchema): string | null {
   }
 }
 
-function lit(value: unknown): string {
+function lit(value: JsonValue): string {
   if (value === null || value === undefined) return "NULL";
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
-  if (typeof value === "boolean") return value ? "true" : "false";
+  if (isNumber(value)) return Number.isFinite(value) ? String(value) : "NULL";
+  if (value === true || value === false) return value ? "true" : "false";
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
@@ -266,7 +259,7 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
 }
 
 /** Open an existing projection and run one Cypher query. */
-export async function queryProjection(dbPath: string, cypher: string): Promise<Record<string, unknown>[]> {
+export async function queryProjection(dbPath: string, cypher: string): Promise<Record<string, LbugValue>[]> {
   const lbug = await loadLbug();
   if (!existsSync(dbPath)) {
     throw new Error(`no projection at ${dbPath}; run \`trestle project build\` first`);

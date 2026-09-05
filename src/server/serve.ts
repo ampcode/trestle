@@ -15,11 +15,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join, resolve, sep } from "node:path";
-import { profileFromLock, type ProfileLock } from "../profile/define.ts";
+import { isProfileLock, profileFromLock } from "../profile/define.ts";
 import { queryProjection } from "../project/ladybug.ts";
 import { Store } from "../store/store.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import type { VisualizationConfig } from "../cli/config.ts";
+import { isString, isProperties, type JsonValue, type Properties } from "../profile/value.ts";
+import type { LbugValue } from "@ladybugdb/core";
 
 const PROTOCOL_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18"]);
 const DEFAULT_PROTOCOL = "2025-06-18";
@@ -42,7 +44,7 @@ export interface VisualizationGraph {
     kind: string;
     label: string;
     identity: Record<string, string | number | boolean>;
-    props: Record<string, unknown>;
+    props: Properties;
     provenance: string;
   }>;
   edges: Array<{
@@ -51,7 +53,7 @@ export interface VisualizationGraph {
     target: string;
     kind: string;
     identity: Record<string, string | number | boolean>;
-    props: Record<string, unknown>;
+    props: Properties;
     evidenceCount: number;
   }>;
 }
@@ -60,11 +62,11 @@ interface JsonRpcMessage {
   jsonrpc?: string;
   id?: number | string | null;
   method?: string;
-  params?: Record<string, unknown>;
+  params?: Properties;
 }
 
 type JsonRpcResponse = { jsonrpc: "2.0"; id: number | string | null } & (
-  | { result: unknown }
+  | { result: JsonValue }
   | { error: { code: number; message: string } }
 );
 
@@ -82,12 +84,13 @@ function version(): string {
 interface ToolDef {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
-  run(cfg: ServeConfig, args: Record<string, unknown>): Promise<string>;
+  inputSchema: Properties;
+  run(cfg: ServeConfig, args: Properties): Promise<string>;
 }
 
 function openStore(cfg: ServeConfig): Store {
-  const lock = JSON.parse(readFileSync(cfg.lockPath, "utf8")) as ProfileLock;
+  const lock: unknown = JSON.parse(readFileSync(cfg.lockPath, "utf8"));
+  if (!isProfileLock(lock)) throw new Error(`invalid profile lock at ${cfg.lockPath}`);
   const store = new Store(cfg.dbPath);
   store.activateProfile(profileFromLock(lock), lock.hash);
   return store;
@@ -108,12 +111,14 @@ export function readVisualizationGraph(cfg: ServeConfig): VisualizationGraph {
   const store = openStore(cfg);
   try {
     const count = (table: string, extra = ""): number =>
+      // SAFETY: COUNT always yields one numeric c column in SQLite's default integer mode.
       (
         store.db
           .prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE retired_rev IS NULL${extra}`)
           .get() as { c: number }
       ).c;
     const evidence = new Map(
+      // SAFETY: entity_stable is NOT NULL TEXT; COUNT's numeric alias is evidence_count.
       (
         store.db
           .prepare(
@@ -181,7 +186,7 @@ export const TOOLS: ToolDef[] = [
     },
     async run(cfg, args) {
       const cypher = args.cypher;
-      if (typeof cypher !== "string" || cypher.trim() === "") throw new Error("graph_query requires a cypher string");
+      if (!isString(cypher) || cypher.trim() === "") throw new Error("graph_query requires a cypher string");
       const rows = await queryProjection(cfg.projectionPath, cypher);
       return JSON.stringify(rows, null, 2);
     },
@@ -226,6 +231,7 @@ export const TOOLS: ToolDef[] = [
       const store = openStore(cfg);
       try {
         const count = (table: string): number =>
+          // SAFETY: COUNT always returns one row with a numeric c in SQLite's default integer mode.
           (store.db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE retired_rev IS NULL`).get() as { c: number }).c;
         return JSON.stringify(
           {
@@ -247,9 +253,12 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
-/** Client-safe error text: the message only, never a stringified exception or stack. */
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : "unknown error";
+function isMessage(value: unknown): value is JsonRpcMessage {
+  return isProperties(value)
+    && (value.jsonrpc === undefined || isString(value.jsonrpc))
+    && (value.id === undefined || value.id === null || typeof value.id === "number" || isString(value.id))
+    && (value.method === undefined || isString(value.method))
+    && (value.params === undefined || isProperties(value.params));
 }
 
 /** ---------- JSON-RPC dispatch ---------- */
@@ -257,18 +266,18 @@ function errorMessage(err: unknown): string {
 async function handleMessage(cfg: ServeConfig, msg: JsonRpcMessage): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
   const isNotification = msg.id === undefined;
-  const reply = (result: unknown): JsonRpcResponse | null => (isNotification ? null : { jsonrpc: "2.0", id, result });
+  const reply = (result: JsonValue): JsonRpcResponse | null => (isNotification ? null : { jsonrpc: "2.0", id, result });
   const fail = (code: number, message: string): JsonRpcResponse | null =>
     isNotification ? null : { jsonrpc: "2.0", id, error: { code, message } };
 
-  if (msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
+  if (msg.jsonrpc !== "2.0" || !isString(msg.method)) {
     return fail(-32600, "invalid JSON-RPC 2.0 message");
   }
   switch (msg.method) {
     case "initialize": {
-      const requested = (msg.params as { protocolVersion?: string } | undefined)?.protocolVersion;
+      const requested = msg.params?.protocolVersion;
       return reply({
-        protocolVersion: requested && PROTOCOL_VERSIONS.has(requested) ? requested : DEFAULT_PROTOCOL,
+        protocolVersion: isString(requested) && PROTOCOL_VERSIONS.has(requested) ? requested : DEFAULT_PROTOCOL,
         capabilities: { tools: {} },
         serverInfo: { name: "trestle", version: version() },
       });
@@ -280,15 +289,17 @@ async function handleMessage(cfg: ServeConfig, msg: JsonRpcMessage): Promise<Jso
         tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       });
     case "tools/call": {
-      const params = (msg.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };
+      const params = msg.params ?? {};
       const tool = TOOLS.find((t) => t.name === params.name);
       if (!tool) return fail(-32602, `unknown tool "${params.name}"`);
+      const args = params.arguments ?? {};
+      if (!isProperties(args)) return fail(-32602, "tool arguments must be an object");
       try {
-        const text = await tool.run(cfg, params.arguments ?? {});
+        const text = await tool.run(cfg, args);
         return reply({ content: [{ type: "text", text }], isError: false });
       } catch (err) {
         // Tool-level failures are in-band results per the MCP spec.
-        return reply({ content: [{ type: "text", text: errorMessage(err) }], isError: true });
+        return reply({ content: [{ type: "text", text: err instanceof Error ? err.message : "unknown error" }], isError: true });
       }
     }
     default:
@@ -317,7 +328,7 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+function sendJson(res: ServerResponse, status: number, body: JsonValue | VisualizationGraph | Record<string, LbugValue>[]): void {
   const text = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -340,16 +351,16 @@ function sendFile(res: ServerResponse, path: string, contentType: string, cacheC
 const PACKAGE_ROOT = join(import.meta.dirname, "..", "..");
 const VIZ_DIR = join(PACKAGE_ROOT, "src", "viz");
 
-const CONTENT_TYPES: Record<string, string> = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".ico": "image/x-icon",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".xml": "application/xml; charset=utf-8",
-};
+const CONTENT_TYPES = new Map([
+  [".css", "text/css; charset=utf-8"],
+  [".html", "text/html; charset=utf-8"],
+  [".ico", "image/x-icon"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".json", "application/json; charset=utf-8"],
+  [".png", "image/png"],
+  [".svg", "image/svg+xml"],
+  [".xml", "application/xml; charset=utf-8"],
+]);
 
 function serveVisualizationAsset(res: ServerResponse, pathname: string): boolean {
   if (pathname !== "/" && !pathname.startsWith("/assets/")) return false;
@@ -357,8 +368,19 @@ function serveVisualizationAsset(res: ServerResponse, pathname: string): boolean
   const root = resolve(VIZ_DIR);
   const path = resolve(root, relativePath);
   if (!path.startsWith(`${root}${sep}`) || !existsSync(path) || !statSync(path).isFile()) return false;
+  if (pathname === "/") {
+    // The pinned G6VP SDK eagerly loads all of these after its bundle executes.
+    // Discover them with the HTML instead, without modifying the built assets.
+    const icons = "https://at.alicdn.com/t/a/font_3381398_i824ocozt7";
+    res.setHeader("Link", [
+      "</api/graph>; rel=preload; as=fetch; crossorigin",
+      `<${icons}.js>; rel=preload; as=script`,
+      `<${icons}.json>; rel=preload; as=fetch; crossorigin`,
+      ...["woff2", "woff", "ttf"].map(ext => `<${icons}.${ext}>; rel=preload; as=font; crossorigin`),
+    ].join(", "));
+  }
   const cacheControl = pathname === "/" ? "no-cache" : "public, max-age=31536000, immutable";
-  sendFile(res, path, CONTENT_TYPES[extname(path)] ?? "application/octet-stream", cacheControl);
+  sendFile(res, path, CONTENT_TYPES.get(extname(path)) ?? "application/octet-stream", cacheControl);
   return true;
 }
 
@@ -382,8 +404,8 @@ export function startServer(cfg: ServeConfig, opts: { port: number; host?: strin
         return;
       }
       if (req.method === "POST" && pathname === "/api/query") {
-        const body = JSON.parse(await readBody(req)) as { query?: unknown };
-        if (typeof body.query !== "string" || body.query.trim() === "") {
+        const body: JsonValue = JSON.parse(await readBody(req));
+        if (!isProperties(body) || !isString(body.query) || body.query.trim() === "") {
           sendJson(res, 400, { error: "query must be a non-empty string" });
           return;
         }
@@ -395,20 +417,24 @@ export function startServer(cfg: ServeConfig, opts: { port: number; host?: strin
         sendJson(res, 404, { error: "not found" });
         return;
       }
-      let parsed: unknown;
+      let parsed: JsonValue;
       try {
         parsed = JSON.parse(await readBody(req));
       } catch (err) {
         sendJson(res, 400, {
           jsonrpc: "2.0",
           id: null,
-          error: { code: -32700, message: errorMessage(err) },
+          error: { code: -32700, message: err instanceof Error ? err.message : "unknown error" },
         });
         return;
       }
-      const messages = Array.isArray(parsed) ? (parsed as JsonRpcMessage[]) : [parsed as JsonRpcMessage];
+      const messages = Array.isArray(parsed) ? parsed : [parsed];
       const responses: JsonRpcResponse[] = [];
       for (const msg of messages) {
+        if (!isMessage(msg)) {
+          responses.push({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid JSON-RPC 2.0 message" } });
+          continue;
+        }
         const r = await handleMessage(cfg, msg);
         if (r) responses.push(r);
       }
@@ -418,14 +444,14 @@ export function startServer(cfg: ServeConfig, opts: { port: number; host?: strin
         sendJson(res, 200, Array.isArray(parsed) ? responses : responses[0]);
       }
     } catch (err) {
-      sendJson(res, 500, { error: errorMessage(err) });
+      sendJson(res, 500, { error: err instanceof Error ? err.message : "unknown error" });
     }
   });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(opts.port, host, () => {
       const addr = server.address();
-      const port = typeof addr === "object" && addr ? addr.port : opts.port;
+      const port = addr && !isString(addr) ? addr.port : opts.port;
       resolve({
         server,
         port,

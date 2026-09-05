@@ -1,9 +1,10 @@
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { canonicalJson, sha256, stableHash } from "../profile/canonical.ts";
+import { canonicalJson, stableHash } from "../profile/canonical.ts";
 import type { Profile } from "../profile/define.ts";
-import { validateIdentity, validateProps, type Scalar } from "../profile/validate.ts";
+import { validateIdentity, validateProps, isScalar, type Scalar } from "../profile/validate.ts";
+import { isString, type JsonValue, type Properties } from "../profile/value.ts";
 import type { Directive, NodeRef } from "../resolve/directives.ts";
 
 /** ---------- row shapes (as returned to user code) ---------- */
@@ -14,9 +15,9 @@ export interface FactRow {
   version: number;
   cell: string;
   sourcePath: string;
-  locator: unknown;
+  locator: JsonValue;
   authority: { tool: string; version?: string; asOf?: string } | null;
-  props: Record<string, unknown>;
+  props: Properties;
 }
 
 export interface NodeRow {
@@ -24,7 +25,7 @@ export interface NodeRow {
   kind: string;
   identity: Record<string, Scalar>;
   stableId: string;
-  props: Record<string, unknown>;
+  props: Properties;
   provenance: "stub" | "declared";
   owner: string;
   createdRev: number;
@@ -37,7 +38,7 @@ export interface EdgeRow {
   toStable: string;
   identity: Record<string, Scalar>;
   stableId: string;
-  props: Record<string, unknown>;
+  props: Properties;
   owner: string;
   createdRev: number;
 }
@@ -45,10 +46,62 @@ export interface EdgeRow {
 export interface FactInput {
   kind: string;
   sourcePath: string;
-  locator?: unknown;
+  locator?: JsonValue;
   authority?: { tool: string; version?: string; asOf?: string };
-  props: Record<string, unknown>;
+  props: Properties;
 }
+
+/** SQLite read contracts. JSON columns stay serialized until mapped to the public API. */
+type StoredFact = Omit<FactRow, "sourcePath" | "locator" | "authority" | "props"> & {
+  source_path: string;
+  locator: string | null;
+  authority: string | null;
+  props: string;
+};
+
+type StoredNode = Omit<NodeRow, "identity" | "stableId" | "props" | "createdRev"> & {
+  identity: string;
+  stable_id: string;
+  props: string;
+  created_rev: number;
+};
+
+type StoredEdge = Omit<EdgeRow, "fromStable" | "toStable" | "identity" | "stableId" | "props" | "createdRev"> & {
+  from_stable: string;
+  to_stable: string;
+  identity: string;
+  stable_id: string;
+  props: string;
+  created_rev: number;
+};
+
+export type StoredEvidence = {
+  id: number;
+  entity_type: "node" | "edge";
+  entity_stable: string;
+  fact_id: number | null;
+  source_path: string | null;
+  locator: string | null;
+  resolver: string;
+  resolver_version: string;
+  rule: string | null;
+  note: string | null;
+  created_rev: number;
+  retired_rev: number | null;
+};
+
+export type StoredClaim = {
+  id: number;
+  kind: string;
+  about: string;
+  detail: string;
+  candidates: string | null;
+  resolver: string;
+  rule: string | null;
+  status: string;
+  created_rev: number;
+  retired_rev: number | null;
+};
 
 const DDL = `
 PRAGMA journal_mode = WAL;
@@ -188,7 +241,7 @@ export class Store {
 
   /** ---------- revisions ---------- */
 
-  beginRevision(kind: string, meta: Record<string, unknown> = {}): number {
+  beginRevision(kind: string, meta: Properties = {}): number {
     const r = this.db
       .prepare(`INSERT INTO revisions (kind, meta) VALUES (?, ?)`)
       .run(kind, JSON.stringify(meta));
@@ -196,8 +249,8 @@ export class Store {
   }
 
   currentRevision(): number {
-    const row = this.db.prepare(`SELECT MAX(rev) AS rev FROM revisions`).get() as { rev: number | null };
-    return row.rev ?? 0;
+    const row = this.db.prepare(`SELECT MAX(rev) AS rev FROM revisions`).get();
+    return Number(row?.rev ?? 0);
   }
 
   /** ---------- profile ---------- */
@@ -259,6 +312,7 @@ export class Store {
   }
 
   getMemoCell(key: string): { fingerprint: string; inputs: { path: string; hash: string }[] } | null {
+    // SAFETY: this query selects the two non-null TEXT columns defined in memo_cells.
     const row = this.db.prepare(`SELECT fingerprint, inputs FROM memo_cells WHERE key = ?`).get(key) as
       | { fingerprint: string; inputs: string }
       | undefined;
@@ -276,8 +330,8 @@ export class Store {
   }
 
   listMemoCellKeys(): string[] {
-    return (this.db.prepare(`SELECT key FROM memo_cells ORDER BY key`).all() as { key: string }[]).map(
-      (r) => r.key,
+    return this.db.prepare(`SELECT key FROM memo_cells ORDER BY key`).all().map(
+      (r) => String(r.key),
     );
   }
 
@@ -286,6 +340,26 @@ export class Store {
   }
 
   /** ---------- facts ---------- */
+
+  /** Replace a cell's facts and optional memo state as one atomic commit. */
+  replaceFactsByCell(
+    cell: string,
+    facts: FactInput[],
+    rev: number,
+    memo?: { fingerprint: string; inputs: { path: string; hash: string }[] },
+  ) {
+    this.db.exec("BEGIN");
+    try {
+      const retired = this.retireFactsByCell(cell, rev);
+      for (const fact of facts) this.insertFact(fact, cell, rev);
+      if (memo) this.putMemoCell(cell, memo.fingerprint, memo.inputs, rev);
+      this.db.exec("COMMIT");
+      return { emitted: facts.length, retired };
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
 
   insertFact(fact: FactInput, cell: string, rev: number): number {
     const profile = this.requireProfile();
@@ -296,7 +370,7 @@ export class Store {
       );
     }
     const errors = validateProps(def.props, fact.props, `fact "${fact.kind}"`);
-    if (typeof fact.sourcePath !== "string" || fact.sourcePath.length === 0) {
+    if (!isString(fact.sourcePath) || fact.sourcePath.length === 0) {
       errors.push(`fact "${fact.kind}": sourcePath is required`);
     }
     if (errors.length > 0) throw new Error(`emit rejected:\n  - ${errors.join("\n  - ")}`);
@@ -331,11 +405,12 @@ export class Store {
         `SELECT id, kind, version, cell, source_path, locator, authority, props
          FROM facts WHERE kind = ? AND retired_rev IS NULL ORDER BY id`,
       )
-      .all(kind) as Record<string, unknown>[];
+      .all(kind);
     return rows.map(rowToFact);
   }
 
   factCounts(): { kind: string; count: number }[] {
+    // SAFETY: kind is TEXT and SQLite COUNT(*) returns a number with default integer decoding.
     return this.db
       .prepare(`SELECT kind, COUNT(*) AS count FROM facts WHERE retired_rev IS NULL GROUP BY kind ORDER BY count DESC`)
       .all() as { kind: string; count: number }[];
@@ -352,53 +427,51 @@ export class Store {
   }
 
   liveNodes(kind?: string): NodeRow[] {
-    const rows = (
+    const rows =
       kind
         ? this.db.prepare(`SELECT * FROM nodes WHERE kind = ? AND retired_rev IS NULL ORDER BY id`).all(kind)
-        : this.db.prepare(`SELECT * FROM nodes WHERE retired_rev IS NULL ORDER BY id`).all()
-    ) as Record<string, unknown>[];
+        : this.db.prepare(`SELECT * FROM nodes WHERE retired_rev IS NULL ORDER BY id`).all();
     return rows.map(rowToNode);
   }
 
   liveNodeByStable(stableId: string): NodeRow | null {
-    const row = this.db.prepare(`SELECT * FROM nodes WHERE stable_id = ? AND retired_rev IS NULL`).get(stableId) as
-      | Record<string, unknown>
-      | undefined;
+    const row = this.db.prepare(`SELECT * FROM nodes WHERE stable_id = ? AND retired_rev IS NULL`).get(stableId);
     return row ? rowToNode(row) : null;
   }
 
   liveEdges(kind?: string): EdgeRow[] {
-    const rows = (
+    const rows =
       kind
         ? this.db.prepare(`SELECT * FROM edges WHERE kind = ? AND retired_rev IS NULL ORDER BY id`).all(kind)
-        : this.db.prepare(`SELECT * FROM edges WHERE retired_rev IS NULL ORDER BY id`).all()
-    ) as Record<string, unknown>[];
+        : this.db.prepare(`SELECT * FROM edges WHERE retired_rev IS NULL ORDER BY id`).all();
     return rows.map(rowToEdge);
   }
 
-  liveEvidenceFor(entityStable: string): Record<string, unknown>[] {
+  liveEvidenceFor(entityStable: string): StoredEvidence[] {
+    // SAFETY: SELECT * returns the evidence DDL columns; writers use node/edge tags and serialized locators.
     return this.db
       .prepare(`SELECT * FROM evidence WHERE entity_stable = ? AND retired_rev IS NULL ORDER BY id`)
-      .all(entityStable) as Record<string, unknown>[];
+      .all(entityStable) as StoredEvidence[];
   }
 
-  openClaims(kind?: string): Record<string, unknown>[] {
+  openClaims(kind?: string): StoredClaim[] {
+    // SAFETY: both branches select the claims DDL columns, including nullable candidates/rule/retired_rev.
     return (
       kind
         ? this.db
             .prepare(`SELECT * FROM claims WHERE kind = ? AND status = 'open' AND retired_rev IS NULL ORDER BY id`)
             .all(kind)
         : this.db.prepare(`SELECT * FROM claims WHERE status = 'open' AND retired_rev IS NULL ORDER BY id`).all()
-    ) as Record<string, unknown>[];
+    ) as StoredClaim[];
   }
 
   /** ---------- node ref resolution ---------- */
 
-  resolveNodeRef(ref: NodeRef): { kind: string; identity: Record<string, Scalar>; stableId: string } {
+  resolveNodeRef(ref: NodeRef) {
     const profile = this.requireProfile();
     let kind: string;
-    let identity: Record<string, Scalar>;
-    if (typeof ref === "string") {
+    let identity: NodeRow["identity"];
+    if (isString(ref)) {
       const idx = ref.indexOf(":");
       if (idx <= 0) throw new Error(`invalid node ref "${ref}" (expected "Kind:value")`);
       kind = ref.slice(0, idx);
@@ -427,7 +500,7 @@ export class Store {
     resolverName: string,
     resolverVersion: string,
     directives: Directive[],
-  ): { rev: number; applied: Record<string, number> } {
+  ) {
     const profile = this.requireProfile();
     const rev = this.beginRevision("resolve", { resolver: resolverName, version: resolverVersion });
     const applied = { node: 0, edge: 0, alias: 0, claim: 0, evidence: 0, retired: 0 };
@@ -453,6 +526,7 @@ export class Store {
         }
         return cur;
       };
+      // SAFETY: this query selects the two non-null stable-id TEXT columns from aliases.
       const existingAliases = this.db
         .prepare(`SELECT canonical_stable, alias_stable FROM aliases WHERE retired_rev IS NULL`)
         .all() as { canonical_stable: string; alias_stable: string }[];
@@ -526,11 +600,15 @@ export class Store {
         this.vivify(from.kind, from.identity, fromStable, resolverName, rev);
         this.vivify(to.kind, to.identity, toStable, resolverName, rev);
 
-        const props: Record<string, unknown> = { ...(d.props ?? {}), ...(d.identity ?? {}) };
+        const props = { ...d.props, ...d.identity };
         const propErrors = validateProps(def.props, props, `edge ${d.kind}`);
         if (propErrors.length > 0) throw new Error(`directive rejected:\n  - ${propErrors.join("\n  - ")}`);
         const identity: Record<string, Scalar> = {};
-        for (const field of def.identity) identity[field] = props[field] as Scalar;
+        for (const field of def.identity) {
+          const value = props[field];
+          if (!isScalar(value)) throw new Error(`edge ${d.kind}: identity prop "${field}" must be a scalar`);
+          identity[field] = value;
+        }
 
         const stable = this.edgeStableId(d.kind, fromStable, toStable, identity);
         this.upsertEdge(d.kind, fromStable, toStable, identity, stable, props, resolverName, rev);
@@ -624,7 +702,7 @@ export class Store {
    * carrying live evidence, are kept — mirroring the orphan cleanup in
    * applyDirectives.
    */
-  retireAbandonedOwners(activeOwners: string[]): { retired: number; owners: string[] } {
+  retireAbandonedOwners(activeOwners: string[]) {
     const activeJson = JSON.stringify(activeOwners);
     const abandoned = new Set<string>();
     for (const [table, col] of [
@@ -634,6 +712,7 @@ export class Store {
       ["claims", "resolver"],
       ["aliases", "resolver"],
     ] as const) {
+      // SAFETY: each selected owner/resolver column is non-null TEXT, aliased to o.
       const rows = this.db
         .prepare(
           `SELECT DISTINCT ${col} AS o FROM ${table}
@@ -703,7 +782,7 @@ export class Store {
     kind: string,
     identity: Record<string, Scalar>,
     stableId: string,
-    props: Record<string, unknown>,
+    props: Properties,
     provenance: "stub" | "declared",
     owner: string,
     rev: number,
@@ -738,10 +817,11 @@ export class Store {
     toStable: string,
     identity: Record<string, Scalar>,
     stableId: string,
-    props: Record<string, unknown>,
+    props: Properties,
     owner: string,
     rev: number,
   ): void {
+    // SAFETY: edges.id is INTEGER and props is non-null JSON TEXT; get may find no live edge.
     const existing = this.db
       .prepare(`SELECT id, props FROM edges WHERE stable_id = ? AND retired_rev IS NULL`)
       .get(stableId) as { id: number; props: string } | undefined;
@@ -788,7 +868,7 @@ export class Store {
     // Re-point live edges touching the alias node.
     const touching = this.db
       .prepare(`SELECT * FROM edges WHERE (from_stable = ? OR to_stable = ?) AND retired_rev IS NULL`)
-      .all(aliasStable, aliasStable) as Record<string, unknown>[];
+      .all(aliasStable, aliasStable);
     for (const raw of touching) {
       const e = rowToEdge(raw);
       this.db.prepare(`UPDATE edges SET retired_rev = ? WHERE id = ?`).run(rev, e.id);
@@ -799,7 +879,7 @@ export class Store {
       // Re-point the edge's evidence (retire + reinsert keeps append-only history).
       const evRows = this.liveEvidenceFor(e.stableId);
       for (const ev of evRows) {
-        this.db.prepare(`UPDATE evidence SET retired_rev = ? WHERE id = ?`).run(rev, ev.id as number);
+        this.db.prepare(`UPDATE evidence SET retired_rev = ? WHERE id = ?`).run(rev, ev.id);
         this.db
           .prepare(
             `INSERT INTO evidence (entity_type, entity_stable, fact_id, source_path, locator,
@@ -807,15 +887,15 @@ export class Store {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
-            ev.entity_type as string,
+            ev.entity_type,
             newStable,
-            (ev.fact_id as number) ?? null,
-            (ev.source_path as string) ?? null,
-            (ev.locator as string) ?? null,
-            ev.resolver as string,
-            ev.resolver_version as string,
-            (ev.rule as string) ?? null,
-            (ev.note as string) ?? null,
+            ev.fact_id,
+            ev.source_path,
+            ev.locator,
+            ev.resolver,
+            ev.resolver_version,
+            ev.rule,
+            ev.note,
             rev,
           );
       }
@@ -823,50 +903,56 @@ export class Store {
     // Re-point evidence attached directly to the alias node.
     const nodeEv = this.liveEvidenceFor(aliasStable);
     for (const ev of nodeEv) {
-      this.db.prepare(`UPDATE evidence SET entity_stable = ? WHERE id = ?`).run(canonicalStable, ev.id as number);
+      this.db.prepare(`UPDATE evidence SET entity_stable = ? WHERE id = ?`).run(canonicalStable, ev.id);
     }
   }
 }
 
 /** ---------- row mappers ---------- */
 
-function rowToFact(row: Record<string, unknown>): FactRow {
+function rowToFact(raw: Record<string, SQLOutputValue>): FactRow {
+  // SAFETY: callers select the facts DDL columns; insertFact serializes props, authority and locator.
+  const row = raw as StoredFact;
   return {
-    id: row.id as number,
-    kind: row.kind as string,
-    version: row.version as number,
-    cell: row.cell as string,
-    sourcePath: row.source_path as string,
-    locator: row.locator ? JSON.parse(row.locator as string) : null,
-    authority: row.authority ? JSON.parse(row.authority as string) : null,
-    props: JSON.parse(row.props as string),
+    id: row.id,
+    kind: row.kind,
+    version: row.version,
+    cell: row.cell,
+    sourcePath: row.source_path,
+    locator: row.locator ? JSON.parse(row.locator) : null,
+    authority: row.authority ? JSON.parse(row.authority) : null,
+    props: JSON.parse(row.props),
   };
 }
 
-function rowToNode(row: Record<string, unknown>): NodeRow {
+function rowToNode(raw: Record<string, SQLOutputValue>): NodeRow {
+  // SAFETY: callers select nodes.*; vivify/upsertNode write scalar identities and stub/declared provenance.
+  const row = raw as StoredNode;
   return {
-    id: row.id as number,
-    kind: row.kind as string,
-    identity: JSON.parse(row.identity as string),
-    stableId: row.stable_id as string,
-    props: JSON.parse(row.props as string),
-    provenance: row.provenance as "stub" | "declared",
-    owner: row.owner as string,
-    createdRev: row.created_rev as number,
+    id: row.id,
+    kind: row.kind,
+    identity: JSON.parse(row.identity),
+    stableId: row.stable_id,
+    props: JSON.parse(row.props),
+    provenance: row.provenance,
+    owner: row.owner,
+    createdRev: row.created_rev,
   };
 }
 
-function rowToEdge(row: Record<string, unknown>): EdgeRow {
+function rowToEdge(raw: Record<string, SQLOutputValue>): EdgeRow {
+  // SAFETY: callers select edges.*; upsertEdge writes scalar identity JSON and non-null stable ids/props.
+  const row = raw as StoredEdge;
   return {
-    id: row.id as number,
-    kind: row.kind as string,
-    fromStable: row.from_stable as string,
-    toStable: row.to_stable as string,
-    identity: JSON.parse(row.identity as string),
-    stableId: row.stable_id as string,
-    props: JSON.parse(row.props as string),
-    owner: row.owner as string,
-    createdRev: row.created_rev as number,
+    id: row.id,
+    kind: row.kind,
+    fromStable: row.from_stable,
+    toStable: row.to_stable,
+    identity: JSON.parse(row.identity),
+    stableId: row.stable_id,
+    props: JSON.parse(row.props),
+    owner: row.owner,
+    createdRev: row.created_rev,
   };
 }
 

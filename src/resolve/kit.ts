@@ -9,6 +9,7 @@ import type { FactRow } from "../store/store.ts";
 import type { NodeRef } from "./directives.ts";
 import type { Emitter, Slice } from "./api.ts";
 import type { Scalar } from "../profile/validate.ts";
+import type { Properties } from "../profile/value.ts";
 
 /** ---------- named rules ---------- */
 
@@ -37,7 +38,7 @@ export function rules<T, R extends object>(setName: string, list: Rule<T, R>[]):
 
 export interface NodeMapRule {
   when?(f: FactRow): boolean;
-  node(f: FactRow): { kind: string; identity: Record<string, Scalar>; props?: Record<string, unknown> } | null;
+  node(f: FactRow): { kind: string; identity: Record<string, Scalar>; props?: Properties } | null;
   rule: string;
 }
 
@@ -47,7 +48,7 @@ export interface EdgeMapRule {
   from(f: FactRow): NodeRef | null;
   to(f: FactRow): NodeRef | null;
   identity?(f: FactRow): Record<string, Scalar>;
-  props?(f: FactRow): Record<string, unknown>;
+  props?(f: FactRow): Properties;
   rule: string;
 }
 

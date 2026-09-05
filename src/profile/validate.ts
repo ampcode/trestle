@@ -1,4 +1,5 @@
 import type { PropSchema } from "./schema.ts";
+import { isString, isNumber, isBoolean, type JsonValue, type Properties } from "./value.ts";
 
 /**
  * Write-boundary prop validation. Returns error strings (empty = valid).
@@ -7,7 +8,7 @@ import type { PropSchema } from "./schema.ts";
  */
 export function validateProps(
   schemas: Record<string, PropSchema>,
-  props: Record<string, unknown>,
+  props: Properties,
   where: string,
 ): string[] {
   const errors: string[] = [];
@@ -27,16 +28,16 @@ export function validateProps(
   return errors;
 }
 
-function validateValue(schema: PropSchema, value: unknown): string | null {
+function validateValue(schema: PropSchema, value: JsonValue): string | null {
   switch (schema.t) {
     case "string":
-      return typeof value === "string" ? null : `must be a string, got ${typeof value}`;
+      return isString(value) ? null : `must be a string`;
     case "number":
-      return typeof value === "number" && Number.isFinite(value) ? null : `must be a finite number`;
+      return isNumber(value) && Number.isFinite(value) ? null : `must be a finite number`;
     case "boolean":
-      return typeof value === "boolean" ? null : `must be a boolean`;
+      return isBoolean(value) ? null : `must be a boolean`;
     case "enum":
-      return typeof value === "string" && schema.values.includes(value)
+      return isString(value) && schema.values.includes(value)
         ? null
         : `must be one of [${schema.values.join(", ")}], got ${JSON.stringify(value)}`;
     case "array": {
@@ -66,7 +67,7 @@ export function isScalar(v: unknown): v is Scalar {
 /** Identity tuples: scalar fields, all required. */
 export function validateIdentity(
   fields: string[],
-  identity: Record<string, unknown>,
+  identity: Properties,
   where: string,
 ): string[] {
   const errors: string[] = [];

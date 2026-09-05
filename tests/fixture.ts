@@ -25,7 +25,7 @@ export const FIXTURE = {
   stubs: ["Z"],
 } as const;
 
-const files: Record<string, string> = {
+const files = {
   "trestle.config.ts": `import type { TrestleConfig } from "${TRESTLE}";
 export default { corpusRoots: ["corpus"] } satisfies TrestleConfig;
 `,

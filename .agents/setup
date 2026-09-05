@@ -5,6 +5,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Oxlint JS plugins reserve multi-GiB virtual arenas; small, swapless orbs
+# reject that reservation under heuristic overcommit (oxc-project/oxc#20331).
+if [ -n "${AMP_ORB:-}" ] && [ -f /proc/sys/vm/overcommit_memory ]; then
+  echo 'vm.overcommit_memory = 1' | sudo -n tee /etc/sysctl.d/90-trestle-oxlint.conf >/dev/null
+  sudo -n sysctl -p /etc/sysctl.d/90-trestle-oxlint.conf
+fi
+
 # Trestle runs TypeScript natively and needs Node >= 23.6.
 if ! command -v node >/dev/null 2>&1; then
   echo ".agents/setup: node not found; install Node >= 23.6" >&2

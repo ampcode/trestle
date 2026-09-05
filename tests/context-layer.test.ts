@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { Store } from "../src/store/store.ts";
 import { buildLock, defineProfile } from "../src/profile/define.ts";
 import { t } from "../src/profile/schema.ts";
+import { isString } from "../src/profile/value.ts";
 import { pipeline } from "../src/extract/pipeline.ts";
 import { runExtraction } from "../src/extract/run.ts";
 import { resolver } from "../src/resolve/api.ts";
@@ -163,7 +164,8 @@ test("renamed or removed resolvers retire their prior output", async () => {
         consumes: { facts: ["file-seen"] },
         run(slice, emit) {
           for (const fact of slice.facts("file-seen")) {
-            emit.node("File", { path: fact.props.path as string }, {}, { evidence: [fact] });
+            assert.ok(isString(fact.props.path));
+            emit.node("File", { path: fact.props.path }, {}, { evidence: [fact] });
           }
         },
       });
@@ -215,7 +217,8 @@ test("declared nodes retire when their facts disappear", async () => {
       consumes: { facts: ["file-seen"] },
       run(slice, emit) {
         for (const fact of slice.facts("file-seen")) {
-          emit.node("File", { path: fact.props.path as string }, {}, { evidence: [fact] });
+          assert.ok(isString(fact.props.path));
+          emit.node("File", { path: fact.props.path }, {}, { evidence: [fact] });
         }
       },
     });
@@ -230,7 +233,7 @@ test("declared nodes retire when their facts disappear", async () => {
     await runResolvers(store, [fileNodes]);
     const live = store.liveNodes();
     assert.equal(live.length, 1, "node without live evidence retired");
-    assert.equal((live[0]!.identity as { path: string }).path, "a.txt");
+    assert.equal(live[0]!.identity.path, "a.txt");
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

@@ -50,5 +50,5 @@ export function pipeline(fn: PipelineFn): PipelineModule {
 }
 
 export function isPipelineModule(v: unknown): v is PipelineModule {
-  return typeof v === "object" && v !== null && (v as Record<string, unknown>).__trestlePipeline === true;
+  return typeof v === "object" && v !== null && "__trestlePipeline" in v && v.__trestlePipeline === true;
 }

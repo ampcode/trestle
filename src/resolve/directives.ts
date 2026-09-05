@@ -1,4 +1,5 @@
 import type { Scalar } from "../profile/validate.ts";
+import type { JsonValue, Properties } from "../profile/value.ts";
 
 /** "Kind:value" shorthand (single-field identity) or explicit object form. */
 export type NodeRef = string | { kind: string; identity: Record<string, Scalar> };
@@ -6,7 +7,7 @@ export type NodeRef = string | { kind: string; identity: Record<string, Scalar> 
 export interface EvidenceInput {
   factId?: number;
   sourcePath?: string;
-  locator?: unknown;
+  locator?: JsonValue;
 }
 
 export type Directive =
@@ -14,7 +15,7 @@ export type Directive =
       op: "node";
       kind: string;
       identity: Record<string, Scalar>;
-      props?: Record<string, unknown>;
+      props?: Properties;
       evidence?: EvidenceInput[];
       rule?: string;
       note?: string;
@@ -26,7 +27,7 @@ export type Directive =
       to: NodeRef;
       /** Values for the edge kind's declared identity props (merged into props). */
       identity?: Record<string, Scalar>;
-      props?: Record<string, unknown>;
+      props?: Properties;
       evidence: EvidenceInput[];
       rule?: string;
       note?: string;
@@ -35,7 +36,7 @@ export type Directive =
   | {
       op: "claim";
       kind: string;
-      about?: unknown[];
+      about?: JsonValue[];
       detail: string;
       candidates?: string[];
       rule?: string;

@@ -14,8 +14,9 @@ export default resolver({
         {
           node: (f) => ({
             kind: "File",
+            // SAFETY: file-inventoried declares path as required t.string(); insertion validates it.
             identity: { path: f.props.path as string },
-            props: { extension: f.props.extension as string | undefined },
+            props: { extension: f.props.extension },
           }),
           rule: "file-node",
         },

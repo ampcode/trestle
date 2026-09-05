@@ -58,6 +58,15 @@ test("project build + Cypher queries over the fixture graph", async (t) => {
     assert.deepEqual(rows.map((r) => r.name), FIXTURE.stubs);
   });
 
+  await t.test("multiple statement results are closed before rejecting the query", async () => {
+    await assert.rejects(
+      queryProjection(projectionPath(), "RETURN 1 AS first; RETURN 2 AS second"),
+      /projection queries must contain one statement/,
+    );
+    const rows = await queryProjection(projectionPath(), "RETURN 3 AS value");
+    assert.equal(Number(rows[0]!.value), 3);
+  });
+
   await t.test("multi-hop traversal: caller -> callee -> resource", async () => {
     const rows = await queryProjection(
       projectionPath(),

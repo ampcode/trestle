@@ -7,18 +7,27 @@ The app uses `@antv/gi-sdk` and `@antv/gi-assets-basic` 2.4.23 with a native
 same-origin `/api/graph` data service. It does not require G6VP's site or HTTP
 service.
 
-The complete app source and dependency lock are in `source/`. To rebuild:
+The complete app source and dependency lock are in `source/`. From the
+repository root, rebuild with:
 
 ```sh
-cp -R src/viz/upstream/source /tmp/trestle-g6vp
-cd /tmp/trestle-g6vp
-mkdir src && mv main.jsx styles.css src/   # index.html loads /src/main.jsx
-npm ci
-# G6VP's published Less imports use webpack's historical `~` prefix.
-rg -l '~antd/' node_modules --glob '*.less' | xargs sed -i 's/~antd\//antd\//g'
-npm run build
-rm -rf "$OLDPWD/src/viz/assets" && cp -R dist/assets dist/index.html "$OLDPWD/src/viz/"
+npm run build:viz
 ```
+
+This installs the locked frontend dependencies with `npm ci`, typechecks
+the JSX with TypeScript's `checkJs`, and builds with Vite. Only after those
+steps succeed does it replace `src/viz/assets/` and `src/viz/index.html`.
+Temporary build output is removed; source and license files are preserved.
+Commit the regenerated assets alongside source changes.
+
+Vite resolves G6VP's historical `~antd/` Less imports with an alias; no
+dependency files are patched and no source files need to be moved.
+
+Root `npm test` rebuilds the app before exercising the server's asset and
+API tests. Root `npm run typecheck` checks both the engine and the JSX app
+(without replacing served assets). Both commands install the locked
+frontend dependencies automatically, so a fresh clone needs no separate
+frontend setup. They require registry access or a populated npm cache.
 
 `package.json` `overrides` prune dependencies that G6VP's packages list but
 the bundle never uses (`dumi`, a docs generator, and `fmin`'s ancient

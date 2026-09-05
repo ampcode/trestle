@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { sha256 } from "../profile/canonical.ts";
+import { isString, isNumber } from "../profile/value.ts";
 import type { FactInput, Store } from "../store/store.ts";
 import type { Corpus, PipelineCtx, PipelineModule, RunResult } from "./pipeline.ts";
 
@@ -92,7 +93,7 @@ export async function runExtraction(
       }
       out.sort();
       if (filter === undefined) return out;
-      if (typeof filter === "string") return out.filter((p) => p.endsWith(filter));
+      if (isString(filter)) return out.filter((p) => p.endsWith(filter));
       return out.filter((p) => filter.test(p));
     },
     read(path, encoding = "utf8") {
@@ -133,15 +134,9 @@ export async function runExtraction(
       currentCell = name;
       cellReads = new Map();
       cellFacts = [];
-      for (const p of inputs) recordRead(p, findAbs(p)); // declared inputs always count
       try {
+        for (const p of inputs) recordRead(p, findAbs(p)); // declared inputs always count
         await fn();
-        // Commit: retire predecessor facts, insert new, store fingerprint over *actual* reads.
-        result.facts.retired += store.retireFactsByCell(name, rev);
-        for (const f of cellFacts) {
-          store.insertFact(f, name, rev);
-          result.facts.emitted++;
-        }
         const actualInputs = [...cellReads.entries()].map(([path, hash]) => ({ path, hash }));
         // Committed with the same function the probe uses; count = actual
         // input count so the next probe (which passes prior.inputs.length)
@@ -151,7 +146,12 @@ export async function runExtraction(
           actualInputs.map((i) => [i.path, i.hash]),
           actualInputs.length,
         );
-        store.putMemoCell(name, actualFingerprint, actualInputs, rev);
+        const committed = store.replaceFactsByCell(name, cellFacts, rev, {
+          fingerprint: actualFingerprint,
+          inputs: actualInputs,
+        });
+        result.facts.retired += committed.retired;
+        result.facts.emitted += committed.emitted;
         result.cells.computed++;
       } catch (err) {
         // A crashing cell fails that cell, not the run; predecessor facts are kept.
@@ -174,11 +174,14 @@ export async function runExtraction(
         });
         return { stdout, stderr: "", status: 0 };
       } catch (err) {
-        const e = err as { stdout?: string; stderr?: string; status?: number; message: string };
-        if (e.status !== undefined && e.status !== null) {
-          return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", status: e.status };
+        if (err instanceof Error && "status" in err && isNumber(err.status)) {
+          return {
+            stdout: "stdout" in err && isString(err.stdout) ? err.stdout : "",
+            stderr: "stderr" in err && isString(err.stderr) ? err.stderr : "",
+            status: err.status,
+          };
         }
-        throw new Error(`run(${tool}): ${e.message}`);
+        throw new Error(`run(${tool}): ${err instanceof Error ? err.message : String(err)}`);
       }
     },
     async acquire(name, fetch) {
@@ -203,11 +206,9 @@ export async function runExtraction(
   await pipelineDef.fn(ctx);
 
   // Root-level emissions behave like a cell recomputed every run.
-  result.facts.retired += store.retireFactsByCell(ROOT_CELL, rev);
-  for (const f of rootFacts) {
-    store.insertFact(f, ROOT_CELL, rev);
-    result.facts.emitted++;
-  }
+  const committed = store.replaceFactsByCell(ROOT_CELL, rootFacts, rev);
+  result.facts.retired += committed.retired;
+  result.facts.emitted += committed.emitted;
 
   // Stale cells: memo cells the pipeline no longer invokes (renamed keys,
   // deleted files, removed loops). Retire their facts so they don't linger

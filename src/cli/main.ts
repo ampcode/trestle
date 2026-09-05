@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
-import { buildLock, profileFromLock, type Profile, type ProfileLock } from "../profile/define.ts";
+import { buildLock, isProfile, isProfileLock, profileFromLock, type Profile, type ProfileLock } from "../profile/define.ts";
 import { sha256 } from "../profile/canonical.ts";
 import { Store } from "../store/store.ts";
 import { isPipelineModule } from "../extract/pipeline.ts";
@@ -86,6 +86,13 @@ interface CorpusSourceManifest {
   type: "archive";
   url: string;
   sha256: string;
+}
+
+function isCorpusSourceManifest(value: unknown): value is CorpusSourceManifest {
+  return typeof value === "object" && value !== null
+    && "type" in value && value.type === "archive"
+    && "url" in value && typeof value.url === "string"
+    && "sha256" in value && typeof value.sha256 === "string";
 }
 
 async function corpusAdd(cwd: string, overrides: TrestleConfig, args: string[]): Promise<void> {
@@ -189,8 +196,8 @@ async function corpusRestore(cwd: string, overrides: TrestleConfig): Promise<voi
         console.log(`corpus ${name}: present, skipping`);
         continue;
       }
-      const manifest = JSON.parse(readFileSync(join(corpusRoot, entry), "utf8")) as CorpusSourceManifest;
-      if (manifest.type !== "archive") throw new Error(`${entry}: unknown corpus source type "${manifest.type}"`);
+      const manifest: unknown = JSON.parse(readFileSync(join(corpusRoot, entry), "utf8"));
+      if (!isCorpusSourceManifest(manifest)) throw new Error(`${entry}: invalid archive corpus source manifest`);
       await acquireArchiveCorpus(manifest.url, dest, manifest.sha256);
       console.log(`restored corpus ${relative(cfg.dir, dest)} (sha256 verified)`);
       restored++;
@@ -214,8 +221,8 @@ async function loadAuthoredProfile(profilePath: string): Promise<Profile> {
   if (!existsSync(profilePath)) throw new Error(`profile not found: ${profilePath}`);
   // Cache-bust so repeated in-process builds see edits.
   const mod = await import(`${pathToFileURL(profilePath).href}?t=${Date.now()}`);
-  const profile = mod.default as Profile;
-  if (!profile || profile.__trestleProfile !== true) {
+  const profile: unknown = mod.default;
+  if (!isProfile(profile)) {
     throw new Error(`${profilePath}: default export is not a profile (use defineProfile from "trestle")`);
   }
   return profile;
@@ -245,7 +252,9 @@ async function profileBuild(cwd: string, overrides: TrestleConfig, opts: { write
 
 function readLock(lockPath: string): ProfileLock | null {
   if (!existsSync(lockPath)) return null;
-  return JSON.parse(readFileSync(lockPath, "utf8")) as ProfileLock;
+  const lock: unknown = JSON.parse(readFileSync(lockPath, "utf8"));
+  if (!isProfileLock(lock)) throw new Error(`invalid profile lock at ${lockPath}`);
+  return lock;
 }
 
 /** ---------- stages ---------- */
@@ -326,6 +335,7 @@ async function resolveCmd(cwd: string, overrides: TrestleConfig): Promise<void> 
     // (each resolver retires + reapplies its own provenance). The live-row
     // delta is the idempotency signal.
     const after = liveCounts(store);
+    // SAFETY: liveCounts constructs exactly these six own keys, with no external object spread.
     const deltas = (Object.keys(after) as (keyof typeof after)[])
       .filter((k) => after[k] !== before[k])
       .map((k) => `${k} ${after[k] - before[k] > 0 ? "+" : ""}${after[k] - before[k]}`);
@@ -337,6 +347,7 @@ async function resolveCmd(cwd: string, overrides: TrestleConfig): Promise<void> 
 
 function liveCounts(store: Store): Record<"facts" | "nodes" | "edges" | "evidence" | "claims" | "aliases", number> {
   const count = (table: string): number =>
+    // SAFETY: COUNT returns one numeric c column in SQLite's default integer mode.
     (store.db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE retired_rev IS NULL`).get() as { c: number }).c;
   return {
     facts: count("facts"),
@@ -421,6 +432,7 @@ async function status(cwd: string, overrides: TrestleConfig): Promise<void> {
   try {
     const db = store.db;
     const count = (table: string): number =>
+      // SAFETY: COUNT returns one numeric c column in SQLite's default integer mode.
       (db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE retired_rev IS NULL`).get() as { c: number }).c;
     console.log(`revision ${store.currentRevision()}`);
     console.log(`  facts: ${count("facts")}  nodes: ${count("nodes")}  edges: ${count("edges")}`);

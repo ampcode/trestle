@@ -1,12 +1,14 @@
-import type { FactRow, NodeRow, EdgeRow } from "../store/store.ts";
+import type { FactRow, NodeRow, EdgeRow, StoredEvidence } from "../store/store.ts";
 import type { Directive, EvidenceInput, NodeRef } from "./directives.ts";
 import type { Scalar } from "../profile/validate.ts";
 import { canonicalJson } from "../profile/canonical.ts";
+import { isNumber, isFunction, type JsonValue, type Properties } from "../profile/value.ts";
 
 /** ---------- slice: the resolver's read surface ---------- */
 
 export class FactList extends Array<FactRow> {
   where(pred: (f: FactRow) => boolean): FactList {
+    // SAFETY: inherited Array.from constructs its receiver (FactList); lib.d.ts only exposes Array's return type.
     return FactList.from(this.filter(pred)) as FactList;
   }
 }
@@ -37,7 +39,7 @@ export interface EvidenceRow {
   entityStable: string;
   factId?: number;
   sourcePath?: string;
-  locator?: unknown;
+  locator?: JsonValue;
   resolver: string;
   rule?: string;
 }
@@ -46,7 +48,7 @@ export function makeSlice(deps: {
   factsByKind(kind: string): FactRow[];
   liveNodes(kind?: string): NodeRow[];
   liveEdges(kind?: string): EdgeRow[];
-  liveEvidenceFor(stableId: string): Record<string, unknown>[];
+  liveEvidenceFor(stableId: string): StoredEvidence[];
   consumedFacts: string[] | undefined;
 }): Slice {
   const cache = new Map<string, FactList>();
@@ -56,6 +58,7 @@ export function makeSlice(deps: {
     }
     let list = cache.get(kind);
     if (!list) {
+      // SAFETY: Array.from constructs FactList when called on that subclass, preserving where().
       list = FactList.from(deps.factsByKind(kind)) as FactList;
       cache.set(kind, list);
     }
@@ -86,12 +89,12 @@ export function makeSlice(deps: {
     edges: (kind) => deps.liveEdges(kind),
     evidenceFor: (stableId) =>
       deps.liveEvidenceFor(stableId).map((r) => ({
-        entityStable: String(r.entity_stable),
-        factId: r.fact_id === null || r.fact_id === undefined ? undefined : Number(r.fact_id),
-        sourcePath: r.source_path === null || r.source_path === undefined ? undefined : String(r.source_path),
-        locator: typeof r.locator === "string" ? JSON.parse(r.locator) : undefined,
-        resolver: String(r.resolver),
-        rule: r.rule === null || r.rule === undefined ? undefined : String(r.rule),
+        entityStable: r.entity_stable,
+        factId: r.fact_id ?? undefined,
+        sourcePath: r.source_path ?? undefined,
+        locator: r.locator === null ? undefined : JSON.parse(r.locator),
+        resolver: r.resolver,
+        rule: r.rule ?? undefined,
       })),
   };
 }
@@ -103,7 +106,7 @@ export interface EdgeOpts {
   evidence: (FactRow | EvidenceInput)[];
   rule?: string;
   note?: string;
-  props?: Record<string, unknown>;
+  props?: Properties;
 }
 
 export interface NodeOpts {
@@ -114,15 +117,15 @@ export interface NodeOpts {
 }
 
 export interface Emitter {
-  node(kind: string, identity: Record<string, Scalar>, props?: Record<string, unknown>, opts?: NodeOpts): void;
+  node(kind: string, identity: Record<string, Scalar>, props?: Properties, opts?: NodeOpts): void;
   edge(kind: string, endpoints: { from: NodeRef; to: NodeRef; identity?: Record<string, Scalar> }, opts: EdgeOpts): void;
   alias(canonical: NodeRef, alias: NodeRef): void;
   claim(
     kind: string,
-    opts: { about?: unknown[]; detail: string; candidates?: string[]; rule?: string },
+    opts: { about?: JsonValue[]; detail: string; candidates?: string[]; rule?: string },
   ): void;
-  /** Explicitly skip an unmatched item, with a reason (recorded in run stats). */
-  ignore(subject: unknown, reason: string): void;
+  /** Skip any unmatched item without interpreting it; only the count enters run stats. */
+  ignore<Subject>(subject: Subject, reason: string): void;
 }
 
 export interface CollectedOutput {
@@ -130,12 +133,12 @@ export interface CollectedOutput {
   ignored: { subject: unknown; reason: string }[];
 }
 
-export function makeEmitter(): { emit: Emitter; output: CollectedOutput } {
+export function makeEmitter() {
   const output: CollectedOutput = { directives: [], ignored: [] };
   const toEvidence = (e: FactRow | EvidenceInput): EvidenceInput =>
     "id" in e && "props" in e
       ? { factId: e.id, sourcePath: e.sourcePath, locator: e.locator }
-      : (e as EvidenceInput);
+      : e;
   const emit: Emitter = {
     node(kind, identity, props, opts) {
       output.directives.push({
@@ -200,11 +203,11 @@ export interface ResolverModule extends ResolverDef {
 
 export function resolver(def: ResolverDef): ResolverModule {
   if (!def.name) throw new Error("resolver: name is required");
-  if (typeof def.phase !== "number") throw new Error(`resolver "${def.name}": phase is required`);
-  if (typeof def.run !== "function") throw new Error(`resolver "${def.name}": run() is required`);
+  if (!isNumber(def.phase)) throw new Error(`resolver "${def.name}": phase is required`);
+  if (!isFunction(def.run)) throw new Error(`resolver "${def.name}": run() is required`);
   return { __trestleResolver: true, ...def };
 }
 
 export function isResolverModule(v: unknown): v is ResolverModule {
-  return typeof v === "object" && v !== null && (v as Record<string, unknown>).__trestleResolver === true;
+  return typeof v === "object" && v !== null && "__trestleResolver" in v && v.__trestleResolver === true;
 }

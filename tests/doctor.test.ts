@@ -9,7 +9,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Store } from "../src/store/store.ts";
 import { runDoctor } from "../src/check/doctor.ts";
-import { profileFromLock, type ProfileLock } from "../src/profile/define.ts";
+import { isProfileLock, profileFromLock } from "../src/profile/define.ts";
 import { buildFixture } from "./fixture.ts";
 
 let repo: string;
@@ -23,7 +23,8 @@ after(() => {
 });
 
 function openStore(): Store {
-  const lock = JSON.parse(readFileSync(join(repo, "profile.lock.json"), "utf8")) as ProfileLock;
+  const lock: unknown = JSON.parse(readFileSync(join(repo, "profile.lock.json"), "utf8"));
+  assert.ok(isProfileLock(lock));
   const store = new Store(join(stateDir, "trestle.db"));
   store.activateProfile(profileFromLock(lock), lock.hash);
   return store;
@@ -109,20 +110,19 @@ test("alias-unified near-duplicates are not reported", () => {
       INSERT INTO nodes (kind, identity, stable_id, props, provenance, owner, created_rev)
         VALUES ('Module', '{"name":"A "}', 'fake-dupe-2', '{}', 'declared', 'test', 1);
     `);
-    const realA = (
-      db
-        .prepare(
-          `SELECT stable_id FROM nodes WHERE kind = 'Module'
-           AND json_extract(identity, '$.name') = 'A' AND retired_rev IS NULL`,
-        )
-        .get() as { stable_id: string }
-    ).stable_id;
+    const realA = db
+      .prepare(
+        `SELECT stable_id FROM nodes WHERE kind = 'Module'
+         AND json_extract(identity, '$.name') = 'A' AND retired_rev IS NULL`,
+      )
+      .get();
+    assert.ok(realA, "fixture Module A exists");
     let byId = findingsById(store);
     assert.ok(byId.get("near-duplicate-identities")!.count >= 1, "duplicate visible before alias");
 
     db.prepare(
       `INSERT INTO aliases (canonical_stable, alias_stable, resolver, created_rev) VALUES (?, 'fake-dupe-2', 'test-resolver', 1)`,
-    ).run(realA);
+    ).run(realA.stable_id);
     byId = findingsById(store);
     assert.equal(byId.get("near-duplicate-identities")!.count, 0, "alias-unified pair suppressed");
   } finally {

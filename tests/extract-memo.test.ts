@@ -78,3 +78,132 @@ test("tool-backed memo cells skip when inputs are unchanged", async () => {
 
   store.close();
 });
+
+test("run captures stdout, stderr, and status from a nonzero process exit", async () => {
+  const store = new Store(":memory:");
+  store.activateProfile(profile, buildLock(profile).hash);
+  try {
+    await runExtraction(store, pipeline(({ run }) => {
+      const result = run(process.execPath, [
+        "-e",
+        "process.stdout.write('partial output'); process.stderr.write('tool failure'); process.exitCode = 7;",
+      ]);
+      assert.deepEqual(result, { stdout: "partial output", stderr: "tool failure", status: 7 });
+    }), { corpusRoots: [], stateDir: dir });
+  } finally {
+    store.close();
+  }
+});
+
+test("run identifies a missing executable instead of returning a process result", async () => {
+  const store = new Store(":memory:");
+  store.activateProfile(profile, buildLock(profile).hash);
+  const missingTool = join(dir, "nonexistent-executable");
+  try {
+    await runExtraction(store, pipeline(({ run }) => {
+      assert.throws(() => run(missingTool, []), (error) => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.startsWith(`run(${missingTool}): `));
+        assert.match(error.message, /ENOENT/);
+        return true;
+      });
+    }), { corpusRoots: [], stateDir: dir });
+  } finally {
+    store.close();
+  }
+});
+
+for (const failure of ["invalid fact", "memo write"] as const) {
+  test(`cell replacement rolls back on ${failure} and can retry`, async () => {
+    const store = new Store(":memory:");
+    store.activateProfile(profile, buildLock(profile).hash);
+    const opts = { corpusRoots: [], stateDir: dir, fingerprintSeed: "old" };
+    let invalid = false;
+    const makePipeline = (text: string) => pipeline(async ({ memo, emit }) => {
+      await memo("cell", [], () => {
+        emit({ kind: "line-observed", sourcePath: "a.txt", props: { text } });
+        if (invalid) emit({ kind: "line-observed", sourcePath: "a.txt", props: { text: 42 } });
+      });
+    });
+    try {
+      await runExtraction(store, makePipeline("old"), opts);
+      const oldFacts = store.factsByKind("line-observed");
+      const oldMemo = store.getMemoCell("cell");
+      if (failure === "invalid fact") invalid = true;
+      else store.db.exec(`
+        CREATE TRIGGER fail_memo BEFORE UPDATE ON memo_cells
+        BEGIN SELECT RAISE(ABORT, 'memo write failed'); END;
+      `);
+
+      const nextOpts = { ...opts, fingerprintSeed: "new" };
+      const failed = await runExtraction(store, makePipeline("new"), nextOpts);
+      assert.equal(failed.cells.failed, 1);
+      assert.equal(failed.cells.computed, 0);
+      assert.deepEqual(failed.facts, { emitted: 0, retired: 0 });
+      assert.match(failed.errors[0]!.error, failure === "invalid fact" ? /emit rejected/ : /memo write failed/);
+      assert.deepEqual(store.factsByKind("line-observed"), oldFacts);
+      assert.deepEqual(store.getMemoCell("cell"), oldMemo);
+      assert.equal(store.db.prepare("SELECT COUNT(*) AS c FROM facts").get()?.c, 1);
+
+      invalid = false;
+      if (failure === "memo write") store.db.exec("DROP TRIGGER fail_memo");
+      const retried = await runExtraction(store, makePipeline("new"), nextOpts);
+      assert.equal(retried.cells.computed, 1);
+      assert.deepEqual(retried.facts, { emitted: 1, retired: 1 });
+      assert.deepEqual(store.factsByKind("line-observed").map(f => f.props), [{ text: "new" }]);
+      assert.notDeepEqual(store.getMemoCell("cell"), oldMemo);
+      const unchanged = await runExtraction(store, makePipeline("new"), nextOpts);
+      assert.equal(unchanged.cells.skipped, 1);
+    } finally {
+      store.close();
+    }
+  });
+}
+
+test("root fact replacement is atomic", async () => {
+  const store = new Store(":memory:");
+  store.activateProfile(profile, buildLock(profile).hash);
+  const opts = { corpusRoots: [], stateDir: dir };
+  const rootPipeline = (texts: (string | number)[]) => pipeline(({ emit }) => {
+    for (const text of texts) emit({ kind: "line-observed", sourcePath: "root.txt", props: { text } });
+  });
+  try {
+    await runExtraction(store, rootPipeline(["old"]), opts);
+    const oldFacts = store.factsByKind("line-observed");
+    await assert.rejects(runExtraction(store, rootPipeline(["new", 42]), opts), /emit rejected/);
+    assert.deepEqual(store.factsByKind("line-observed"), oldFacts);
+    assert.equal(store.db.prepare("SELECT COUNT(*) AS c FROM facts").get()?.c, 1);
+    const retried = await runExtraction(store, rootPipeline(["new"]), opts);
+    assert.deepEqual(retried.facts, { emitted: 1, retired: 1 });
+    assert.deepEqual(store.factsByKind("line-observed").map(f => f.props), [{ text: "new" }]);
+  } finally {
+    store.close();
+  }
+});
+
+test("a missing declared input fails only its cell and preserves its prior facts", async () => {
+  const store = new Store(":memory:");
+  store.activateProfile(profile, buildLock(profile).hash);
+  const opts = { corpusRoots: [], stateDir: dir };
+  const makePipeline = (inputs: string[]) => pipeline(async ({ memo, emit }) => {
+    await memo("missing", inputs, () => {
+      emit({ kind: "line-observed", sourcePath: "missing.txt", props: { text: "old" } });
+    });
+    await memo("healthy", [], () => {
+      emit({ kind: "line-observed", sourcePath: "healthy.txt", props: { text: "healthy" } });
+    });
+  });
+  try {
+    await runExtraction(store, makePipeline([]), opts);
+    const oldFacts = store.factsByKind("line-observed").filter(f => f.cell === "missing");
+    const oldMemo = store.getMemoCell("missing");
+    const result = await runExtraction(store, makePipeline(["missing.txt"]), { ...opts, fingerprintSeed: "new" });
+    assert.equal(result.cells.failed, 1);
+    assert.equal(result.cells.computed, 1);
+    assert.deepEqual(result.facts, { emitted: 1, retired: 1 });
+    assert.deepEqual(store.factsByKind("line-observed").filter(f => f.cell === "missing"), oldFacts);
+    assert.deepEqual(store.getMemoCell("missing"), oldMemo);
+  } finally {
+    store.close();
+  }
+});
