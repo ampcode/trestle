@@ -8,6 +8,7 @@ import { sha256 } from "../profile/canonical.ts";
 import { Store } from "../store/store.ts";
 import { isPipelineModule } from "../extract/pipeline.ts";
 import { runExtraction } from "../extract/run.ts";
+import { hashDirSources } from "../extract/seed.ts";
 import { loadResolvers, runResolvers } from "../resolve/run.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import { loadConfig, type TrestleConfig } from "./config.ts";
@@ -258,27 +259,6 @@ function readLock(lockPath: string): ProfileLock | null {
 }
 
 /** ---------- stages ---------- */
-
-/**
- * Content hash of every file under a directory (recursive, sorted).
- * All files count, not just .ts: pipelines shell out to helper tools
- * (extract/tools/*.java, scripts, grammars) whose edits must invalidate
- * memo cells just like pipeline code edits do.
- */
-function hashDirSources(dir: string): string {
-  const entries: [string, string][] = [];
-  const walk = (d: string): void => {
-    if (!existsSync(d)) return;
-    for (const e of readdirSync(d, { withFileTypes: true })) {
-      const p = join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.isFile()) entries.push([relative(dir, p), sha256(readFileSync(p))]);
-    }
-  };
-  walk(dir);
-  entries.sort((a, b) => a[0].localeCompare(b[0]));
-  return sha256(JSON.stringify(entries));
-}
 
 async function openStore(cwd: string, overrides: TrestleConfig): Promise<{ store: Store; cfg: Awaited<ReturnType<typeof loadConfig>> }> {
   const cfg = await loadConfig(cwd, overrides);

@@ -42,24 +42,40 @@ export async function runExtraction(
   };
 
   const hashCache = new Map<string, string>();
-  const contentHash = (absPath: string): string => {
-    let h = hashCache.get(absPath);
-    if (!h) {
-      h = sha256(readFileSync(absPath));
-      hashCache.set(absPath, h);
+  /**
+   * Open a corpus file once and return its bytes.
+   *
+   * Reading and hashing are fused deliberately. Every read has to be hashed
+   * for the cell fingerprint, and on estates large enough to matter the file
+   * open dominates everything else — a mainframe corpus is 138,000 members
+   * against a filesystem doing on the order of a hundred opens a second, so
+   * hashing from a second read would double the cost of extraction.
+   *
+   * Locating the file is fused for the same reason: probing each root with
+   * `existsSync` and then opening the winner is one syscall more than trying
+   * the open and moving on when it fails.
+   */
+  const openCorpusFile = (path: string) => {
+    const candidates = isAbsolute(path) ? [path] : roots.map((root) => join(root, path));
+    for (const abs of candidates) {
+      let bytes: Buffer;
+      try {
+        bytes = readFileSync(abs);
+      } catch (err) {
+        // Only a genuinely absent file means "try the next root"; anything
+        // else (permissions, a directory, I/O failure) is a real error and
+        // must not be reported as a missing corpus path.
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") continue;
+        throw err;
+      }
+      if (!hashCache.has(abs)) hashCache.set(abs, sha256(bytes));
+      return { abs, bytes };
     }
-    return h;
-  };
-  const findAbs = (path: string): string => {
-    if (isAbsolute(path)) {
-      if (existsSync(path)) return path; // acquired artifacts
-      throw new Error(`corpus.read: not found: ${path}`);
-    }
-    for (const root of roots) {
-      const abs = join(root, path);
-      if (existsSync(abs)) return abs;
-    }
-    throw new Error(`corpus.read: "${path}" not found under corpus roots [${roots.join(", ")}]`);
+    throw new Error(
+      isAbsolute(path)
+        ? `corpus.read: not found: ${path}`
+        : `corpus.read: "${path}" not found under corpus roots [${roots.join(", ")}]`,
+    );
   };
 
   // Cell fingerprint = seed (pipeline code + profile) + recorded file reads.
@@ -78,8 +94,21 @@ export async function runExtraction(
   const rootFacts: FactInput[] = [];
   const seenCells = new Set<string>();
 
-  const recordRead = (path: string, abs: string): void => {
-    const h = contentHash(abs);
+  /** Content hash of a corpus path. Throws if it cannot be opened. */
+  const contentHash = (path: string): string => hashCache.get(openCorpusFile(path).abs)!;
+
+  /** Read a corpus file and record it against the running cell. */
+  const readAndRecord = (path: string): Buffer => {
+    const { abs, bytes } = openCorpusFile(path);
+    const h = hashCache.get(abs)!;
+    store.recordArtifact(path, h, "corpus", rev);
+    if (cellReads) cellReads.set(path, h);
+    return bytes;
+  };
+
+  /** Record a declared cell input without needing its bytes. */
+  const recordRead = (path: string): void => {
+    const h = contentHash(path);
     store.recordArtifact(path, h, "corpus", rev);
     if (cellReads) cellReads.set(path, h);
   };
@@ -97,14 +126,10 @@ export async function runExtraction(
       return out.filter((p) => filter.test(p));
     },
     read(path, encoding = "utf8") {
-      const abs = findAbs(path);
-      recordRead(path, abs);
-      return readFileSync(abs, encoding);
+      return readAndRecord(path).toString(encoding);
     },
     readBytes(path) {
-      const abs = findAbs(path);
-      recordRead(path, abs);
-      return readFileSync(abs);
+      return readAndRecord(path);
     },
   };
 
@@ -120,7 +145,7 @@ export async function runExtraction(
       let probeFailed = false;
       for (const p of new Set([...inputs, ...(prior?.inputs.map((i) => i.path) ?? [])])) {
         try {
-          probe.set(p, contentHash(findAbs(p)));
+          probe.set(p, contentHash(p));
         } catch {
           probeFailed = true; // an input disappeared; recompute
         }
@@ -135,7 +160,7 @@ export async function runExtraction(
       cellReads = new Map();
       cellFacts = [];
       try {
-        for (const p of inputs) recordRead(p, findAbs(p)); // declared inputs always count
+        for (const p of inputs) recordRead(p); // declared inputs always count
         await fn();
         const actualInputs = [...cellReads.entries()].map(([path, hash]) => ({ path, hash }));
         // Committed with the same function the probe uses; count = actual
