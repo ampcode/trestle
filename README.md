@@ -212,7 +212,12 @@ representative contributor, not exclusive ownership.
 Removing or renaming a resolver retires only its contributions. Shared entities
 survive; a node whose declarations disappear but which remains an edge endpoint
 becomes a property-free stub. Existing alias identity/re-pointing behavior is
-unchanged, including canonical-node property precedence during a merge.
+unchanged. Node contributions retain their original declaration identity:
+canonical declarations take property precedence over aliased declarations on
+both merge and rerun. Alias-only properties still update and retract; shadowed
+alias values become visible if the canonical property is retracted. Conflicts
+between resolvers declaring the same original identity still fail, even when
+the conflicting property is shadowed by a canonical declaration.
 
 On older stores, migration preserves existing properties under the recorded
 owner and preserves other live evidence contributors with empty property sets.

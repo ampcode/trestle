@@ -11,9 +11,11 @@ does each definition fact declare?" (`unit-mapping`), "which dataset does
 each DD binding reach?" (`dd-resolution`), "which component owns each
 class?" (`component-ownership`). One question per resolver — the engine
 runs them in `phase` order and handles retirement, so each run must produce
-the resolver's entire answer; partial output is a bug. Current node/edge
-upserts enrich existing properties: omitting a property does not retract
-it. Do not assume resolving is a fresh projection of the facts.
+the resolver's entire answer; partial output is a bug. Each run replaces
+that resolver's contribution: omitted properties retract its values.
+Other resolvers' disjoint or equal properties survive; conflicting values
+for the same identity reject the batch rather than choosing a last writer.
+See README "Resolver contributions" for alias precedence and upgrade behavior.
 
 The hard boundary: **resolvers never read artifacts.** Missing information
 means a pipeline gap — add a fact kind, don't work around it here.

@@ -266,15 +266,16 @@ export class Store {
           entity_stable TEXT NOT NULL,
           resolver TEXT NOT NULL,
           props TEXT NOT NULL,
-          PRIMARY KEY (entity_type, entity_stable, resolver)
+          source_stable TEXT NOT NULL,
+          PRIMARY KEY (entity_type, entity_stable, resolver, source_stable)
         );
         CREATE INDEX contributions_resolver ON entity_contributions (resolver);
         INSERT INTO entity_contributions
-          SELECT 'node', stable_id, owner, props FROM nodes WHERE retired_rev IS NULL AND provenance = 'declared';
+          SELECT 'node', stable_id, owner, props, stable_id FROM nodes WHERE retired_rev IS NULL AND provenance = 'declared';
         INSERT INTO entity_contributions
-          SELECT 'edge', stable_id, owner, props FROM edges WHERE retired_rev IS NULL;
+          SELECT 'edge', stable_id, owner, props, stable_id FROM edges WHERE retired_rev IS NULL;
         INSERT OR IGNORE INTO entity_contributions
-          SELECT ev.entity_type, ev.entity_stable, ev.resolver, '{}' FROM evidence ev
+          SELECT ev.entity_type, ev.entity_stable, ev.resolver, '{}', ev.entity_stable FROM evidence ev
           WHERE ev.retired_rev IS NULL AND (
             (ev.entity_type = 'node' AND EXISTS (SELECT 1 FROM nodes n WHERE n.stable_id = ev.entity_stable AND n.retired_rev IS NULL)) OR
             (ev.entity_type = 'edge' AND EXISTS (SELECT 1 FROM edges e WHERE e.stable_id = ev.entity_stable AND e.retired_rev IS NULL))
@@ -681,8 +682,9 @@ export class Store {
         const propErrors = validateProps(def.props, d.props ?? {}, `node ${d.kind}`);
         if (idErrors.length + propErrors.length > 0)
           throw new Error(`directive rejected:\n  - ${[...idErrors, ...propErrors].join("\n  - ")}`);
-        const stable = canon(this.nodeStableId(d.kind, d.identity));
-        this.contribute("node", stable, resolverName, d.props ?? {});
+        const sourceStable = this.nodeStableId(d.kind, d.identity);
+        const stable = canon(sourceStable);
+        this.contribute("node", stable, resolverName, d.props ?? {}, sourceStable);
         this.vivify(d.kind, d.identity, stable, resolverName, rev);
         applied.node++;
 
@@ -859,27 +861,47 @@ export class Store {
   private contributions(entityType: "node" | "edge", stableId: string) {
     // SAFETY: these are non-null TEXT columns; props is written as a JSON object.
     const rows = this.db.prepare(
-      "SELECT resolver, props FROM entity_contributions WHERE entity_type = ? AND entity_stable = ? ORDER BY resolver",
-    ).all(entityType, stableId) as { resolver: string; props: string }[];
+      "SELECT resolver, props, source_stable FROM entity_contributions WHERE entity_type = ? AND entity_stable = ? ORDER BY resolver, source_stable",
+    ).all(entityType, stableId) as { resolver: string; props: string; source_stable: string }[];
     return rows.map(row => {
       const props: Properties = JSON.parse(row.props);
-      return { resolver: row.resolver, props };
+      return { resolver: row.resolver, props, sourceStable: row.source_stable };
     });
   }
 
   /** A batch unions repeated declarations; omission retracts only across batches. */
-  private contribute(entityType: "node" | "edge", stableId: string, resolver: string, props: Properties): void {
-    const prior = this.contributions(entityType, stableId).find(row => row.resolver === resolver);
+  private contribute(entityType: "node" | "edge", stableId: string, resolver: string, props: Properties, sourceStable = stableId): void {
+    const prior = this.contributions(entityType, stableId).find(row => row.resolver === resolver && row.sourceStable === sourceStable);
     const merged = this.mergeContributions(entityType, stableId, [
-      ...(prior ? [prior] : []), { resolver, props },
+      ...(prior ? [prior] : []), { resolver, props, sourceStable },
     ]);
-    this.db.prepare(`INSERT INTO entity_contributions (entity_type, entity_stable, resolver, props) VALUES (?, ?, ?, ?)
-      ON CONFLICT (entity_type, entity_stable, resolver) DO UPDATE SET props = excluded.props`).run(
-      entityType, stableId, resolver, canonicalJson(merged),
+    this.db.prepare(`INSERT INTO entity_contributions (entity_type, entity_stable, resolver, props, source_stable) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (entity_type, entity_stable, resolver, source_stable) DO UPDATE SET props = excluded.props`).run(
+      entityType, stableId, resolver, canonicalJson(merged), sourceStable,
     );
   }
 
-  private mergeContributions(entityType: "node" | "edge", stableId: string, rows: { resolver: string; props: Properties }[]): Properties {
+  private mergeContributions(entityType: "node" | "edge", stableId: string, rows: { resolver: string; props: Properties; sourceStable: string }[]): Properties {
+    // Validate each original identity before applying canonical precedence: even
+    // shadowed alias values must agree when emitted by multiple resolvers.
+    const identities = new Map<string, { resolver: string; props: Properties }[]>();
+    for (const row of rows) {
+      const group = identities.get(row.sourceStable) ?? [];
+      group.push(row);
+      identities.set(row.sourceStable, group);
+    }
+    for (const group of identities.values()) this.mergeProperties(entityType, stableId, group);
+    const canonical = entityType === "node" ? identities.get(stableId) : undefined;
+    const canonicalProps = canonical ? this.mergeProperties(entityType, stableId, canonical) : {};
+    return this.mergeProperties(entityType, stableId, rows.map(row => ({
+      resolver: row.resolver,
+      props: row.sourceStable === stableId ? row.props : Object.fromEntries(
+        Object.entries(row.props).filter(([key]) => !Object.hasOwn(canonicalProps, key)),
+      ),
+    })));
+  }
+
+  private mergeProperties(entityType: "node" | "edge", stableId: string, rows: { resolver: string; props: Properties }[]): Properties {
     const props: Properties = {};
     const owners = new Map<string, string>();
     for (const row of rows) {
@@ -1013,10 +1035,10 @@ export class Store {
     const rows = [...this.contributions(entityType, to), ...this.contributions(entityType, from)];
     this.db.prepare("DELETE FROM entity_contributions WHERE entity_type = ? AND entity_stable IN (?, ?)").run(entityType, from, to);
     for (const row of rows) {
-      const props = Object.fromEntries(Object.entries(row.props).filter(
+      const props = entityType === "node" ? row.props : Object.fromEntries(Object.entries(row.props).filter(
         ([key, value]) => canonicalJson(value) === canonicalJson(winningProps[key]),
       ));
-      this.contribute(entityType, to, row.resolver, props);
+      this.contribute(entityType, to, row.resolver, props, entityType === "node" ? row.sourceStable : to);
     }
   }
 

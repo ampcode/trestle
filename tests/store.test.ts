@@ -199,6 +199,58 @@ test("alias merges retain canonical identity, property precedence, evidence, and
   } finally { e.close(); }
 });
 
+test("aliased declarations rerun, update and retract beneath canonical precedence without hiding conflicts", () => {
+  const e = env();
+  try {
+    e.store.applyDirectives("canonical", "1", [node({ label: "canonical" })]);
+    const alias = (props: Properties) => [node(props, "Alias"), edge({}, "Alias")];
+    e.store.applyDirectives("alias", "1", alias({ label: "alias", extra: "first" }));
+    e.store.applyDirectives("unify", "1", [{ op: "alias", canonical: "Item:A", alias: "Item:Alias" }]);
+    const stable = e.store.nodeStableId("Item", { name: "A" });
+    const original = e.store.liveNodeByStable(stable);
+    e.store.applyDirectives("alias", "1", alias({ label: "alias", extra: "first" }));
+    assert.deepEqual(e.store.liveNodeByStable(stable), original);
+    e.store.applyDirectives("alias", "2", alias({ label: "alias", extra: "second" }));
+    assert.deepEqual(e.store.liveNodeByStable(stable)?.props, { label: "canonical", extra: "second" });
+    assert.deepEqual(e.store.liveNodeByStable(stable)?.identity, { name: "A" });
+    assert.equal(e.store.liveNodes().length, 2);
+    assert.equal(e.store.liveEdges().length, 1);
+    assert.equal(e.store.liveEvidenceFor(e.store.liveEdges()[0].stableId).length, 1);
+    const generation = e.store.currentGeneration();
+    for (const identity of ["A", "Alias"]) {
+      assert.throws(() => e.store.applyDirectives("conflict", "1", [node({ label: "disagree" }, identity)]), /conflicting node property/);
+      assert.equal(e.store.currentGeneration(), generation);
+    }
+    e.store.applyDirectives("alias", "3", alias({ label: "alias" }));
+    assert.deepEqual(e.store.liveNodeByStable(stable)?.props, { label: "canonical" });
+    e.store.applyDirectives("canonical", "2", [node({ label: "updated" })]);
+    assert.deepEqual(e.store.liveNodeByStable(stable)?.props, { label: "updated" });
+    e.store.applyDirectives("canonical", "3", [node()]);
+    assert.deepEqual(e.store.liveNodeByStable(stable)?.props, { label: "alias" });
+    e.store.applyDirectives("canonical", "4", [node({ label: "restored" })]);
+    e.store.retireAbandonedOwners(["alias", "unify"]);
+    assert.deepEqual(e.store.liveNodeByStable(stable)?.props, { label: "alias" });
+    e.store.applyDirectives("alias", "4", alias({}));
+    assert.deepEqual(e.store.liveNodeByStable(stable)?.props, {});
+  } finally { e.close(); }
+});
+
+test("one resolver can declare canonical and alias identities in either order without conflating properties", () => {
+  for (const reverse of [false, true]) {
+    const e = env();
+    try {
+      const declarations = [node({ label: "canonical" }), node({ label: "alias", extra: "alias-only" }, "Alias")];
+      if (reverse) declarations.reverse();
+      e.store.applyDirectives("both", "1", declarations);
+      e.store.applyDirectives("unify", "1", [{ op: "alias", canonical: "Item:A", alias: "Item:Alias" }]);
+      e.store.applyDirectives("both", "2", declarations);
+      assert.deepEqual(e.store.liveNodes()[0].props, { label: "canonical", extra: "alias-only" });
+      e.store.applyDirectives("both", "3", [node({ label: "canonical" }), node({}, "Alias")]);
+      assert.deepEqual(e.store.liveNodes()[0].props, { label: "canonical" });
+    } finally { e.close(); }
+  }
+});
+
 test("profile guards follow the SQLite snapshot and reject a stale in-memory vocabulary", () => {
   const e = env();
   const other = new Store(e.path);
