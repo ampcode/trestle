@@ -117,7 +117,13 @@ export interface NodeOpts {
 }
 
 export interface Emitter {
+  /**
+   * This run replaces this resolver's entire contribution. Repeated declarations
+   * union properties; disjoint or equal values from other resolvers enrich the
+   * entity, but conflicting values reject the batch. Omitted properties retract.
+   */
   node(kind: string, identity: Record<string, Scalar>, props?: Properties, opts?: NodeOpts): void;
+  /** Edge properties use the same contribution/retraction rules as nodes. */
   edge(kind: string, endpoints: { from: NodeRef; to: NodeRef; identity?: Record<string, Scalar> }, opts: EdgeOpts): void;
   alias(canonical: NodeRef, alias: NodeRef): void;
   claim(

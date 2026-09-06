@@ -105,6 +105,12 @@ export type StoredClaim = {
 
 const DDL = `
 PRAGMA journal_mode = WAL;
+CREATE TABLE IF NOT EXISTS store_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  generation INTEGER NOT NULL DEFAULT 0,
+  profile_hash TEXT NOT NULL DEFAULT ''
+);
+INSERT OR IGNORE INTO store_state (id) VALUES (1);
 CREATE TABLE IF NOT EXISTS revisions (
   rev        INTEGER PRIMARY KEY AUTOINCREMENT,
   kind       TEXT NOT NULL,
@@ -233,6 +239,52 @@ export class Store {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec(DDL);
+    this.initializeContributions();
+    // Triggers cover every writer, including direct SQL. Their increments commit
+    // or roll back with the data; allocating a run/revision is not a mutation.
+    for (const table of ["facts", "nodes", "edges", "evidence", "aliases", "claims", "decisions", "profile_snapshots", "entity_contributions"]) {
+      for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
+        this.db.exec(`CREATE TRIGGER IF NOT EXISTS generation_${table}_${operation}
+          AFTER ${operation} ON ${table} BEGIN
+            UPDATE store_state SET generation = generation + 1 WHERE id = 1;
+          END`);
+      }
+    }
+    this.db.exec(`CREATE TRIGGER IF NOT EXISTS generation_profile
+      AFTER UPDATE OF profile_hash ON store_state WHEN OLD.profile_hash != NEW.profile_hash BEGIN
+        UPDATE store_state SET generation = generation + 1 WHERE id = 1;
+      END`);
+  }
+
+  private initializeContributions(): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const exists = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entity_contributions'").get();
+      if (!exists) {
+        this.db.exec(`CREATE TABLE entity_contributions (
+          entity_type TEXT NOT NULL,
+          entity_stable TEXT NOT NULL,
+          resolver TEXT NOT NULL,
+          props TEXT NOT NULL,
+          PRIMARY KEY (entity_type, entity_stable, resolver)
+        );
+        CREATE INDEX contributions_resolver ON entity_contributions (resolver);
+        INSERT INTO entity_contributions
+          SELECT 'node', stable_id, owner, props FROM nodes WHERE retired_rev IS NULL AND provenance = 'declared';
+        INSERT INTO entity_contributions
+          SELECT 'edge', stable_id, owner, props FROM edges WHERE retired_rev IS NULL;
+        INSERT OR IGNORE INTO entity_contributions
+          SELECT ev.entity_type, ev.entity_stable, ev.resolver, '{}' FROM evidence ev
+          WHERE ev.retired_rev IS NULL AND (
+            (ev.entity_type = 'node' AND EXISTS (SELECT 1 FROM nodes n WHERE n.stable_id = ev.entity_stable AND n.retired_rev IS NULL)) OR
+            (ev.entity_type = 'edge' AND EXISTS (SELECT 1 FROM edges e WHERE e.stable_id = ev.entity_stable AND e.retired_rev IS NULL))
+          );`);
+      }
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   close(): void {
@@ -253,20 +305,33 @@ export class Store {
     return Number(row?.rev ?? 0);
   }
 
+  /** Durable mutation token, not a run ID or commit count. Read in the data's transaction. */
+  currentGeneration(): number {
+    return Number(this.db.prepare("SELECT generation FROM store_state WHERE id = 1").get()!.generation);
+  }
+
   /** ---------- profile ---------- */
 
   activateProfile(profile: Profile, hash: string): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.db.prepare(`SELECT hash FROM profile_snapshots WHERE hash = ?`).get(hash);
+      if (!existing) {
+        const rev = this.beginRevision("profile-activation", { hash });
+        const { __trestleProfile: _m, ...bare } = profile;
+        this.db
+          .prepare(`INSERT INTO profile_snapshots (hash, json, activated_rev) VALUES (?, ?, ?)`)
+          .run(hash, canonicalJson(bare), rev);
+        this.createIdentityIndexes(profile);
+      }
+      this.db.prepare("UPDATE store_state SET profile_hash = ? WHERE id = 1 AND profile_hash != ?").run(hash, hash);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
     this.profile = profile;
     this.activeProfileHash = hash;
-    const existing = this.db.prepare(`SELECT hash FROM profile_snapshots WHERE hash = ?`).get(hash);
-    if (!existing) {
-      const rev = this.beginRevision("profile-activation", { hash });
-      const { __trestleProfile: _m, ...bare } = profile;
-      this.db
-        .prepare(`INSERT INTO profile_snapshots (hash, json, activated_rev) VALUES (?, ?, ?)`)
-        .run(hash, canonicalJson(bare), rev);
-      this.createIdentityIndexes(profile);
-    }
   }
 
   private createIdentityIndexes(profile: Profile): void {
@@ -292,6 +357,9 @@ export class Store {
 
   requireProfile(): Profile {
     if (!this.profile) throw new Error("no active profile; run `trestle profile build` and re-open");
+    if (this.db.prepare("SELECT profile_hash FROM store_state WHERE id = 1").get()!.profile_hash !== this.activeProfileHash) {
+      throw new Error("active profile changed; reopen the store with the current profile before reading or writing typed graph data");
+    }
     return this.profile;
   }
 
@@ -455,12 +523,19 @@ export class Store {
   }
 
   /** Current evidence only; referenced facts retain their own independent retirement state. */
-  graphEvidence(entityType: "node" | "edge", stableId: string, limit = 50, afterId = 0) {
+  graphEvidence(entityType: "node" | "edge", stableId: string, limit = 50, afterId = 0, expectedGeneration?: number) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error("limit must be an integer from 1 to 200");
     if (!Number.isSafeInteger(afterId) || afterId < 0) throw new Error("afterId must be a non-negative safe integer");
+    if (expectedGeneration !== undefined && (!Number.isSafeInteger(expectedGeneration) || expectedGeneration < 0)) {
+      throw new Error("expectedGeneration must be a non-negative safe integer");
+    }
     const table = entityType === "node" ? "nodes" : "edges";
     this.db.exec("BEGIN");
     try {
+      const generation = this.currentGeneration();
+      if (expectedGeneration !== undefined && generation !== expectedGeneration) {
+        throw new Error("store generation changed; restart evidence pagination from afterId 0");
+      }
       const revision = this.currentRevision();
       // SAFETY: selected columns are TEXT and nullable INTEGER from nodes/edges DDL.
       const entity = this.db.prepare(
@@ -494,7 +569,7 @@ export class Store {
         };
       });
       return {
-        revision, entityType, stableId, status, kind: entity?.kind ?? null,
+        revision, generation, entityType, stableId, status, kind: entity?.kind ?? null,
         retiredRev: entity?.retired_rev ?? null,
         limit, afterId, evidence, truncated,
         nextAfterId: truncated ? evidence[evidence.length - 1].id : null,
@@ -551,13 +626,14 @@ export class Store {
     resolverVersion: string,
     directives: Directive[],
   ) {
-    const profile = this.requireProfile();
     const rev = this.beginRevision("resolve", { resolver: resolverName, version: resolverVersion });
     const applied = { node: 0, edge: 0, alias: 0, claim: 0, evidence: 0, retired: 0 };
 
-    this.db.exec("BEGIN");
+    this.db.exec("BEGIN IMMEDIATE");
     try {
+      const profile = this.requireProfile();
       // 1. Retire this resolver's prior contribution (evidence, claims, aliases).
+      this.db.prepare("DELETE FROM entity_contributions WHERE resolver = ?").run(resolverName);
       for (const table of ["evidence", "claims", "aliases"]) {
         const r = this.db
           .prepare(`UPDATE ${table} SET retired_rev = ? WHERE resolver = ? AND retired_rev IS NULL`)
@@ -597,7 +673,6 @@ export class Store {
       const canon = (stable: string): string => find(stable);
 
       // 3. Node directives (declared enrichment).
-      const declaredNow = new Set<string>();
       for (const d of directives) {
         if (d.op !== "node") continue;
         const def = profile.nodes[d.kind];
@@ -607,8 +682,8 @@ export class Store {
         if (idErrors.length + propErrors.length > 0)
           throw new Error(`directive rejected:\n  - ${[...idErrors, ...propErrors].join("\n  - ")}`);
         const stable = canon(this.nodeStableId(d.kind, d.identity));
-        this.upsertNode(d.kind, d.identity, stable, d.props ?? {}, "declared", resolverName, rev);
-        declaredNow.add(stable);
+        this.contribute("node", stable, resolverName, d.props ?? {});
+        this.vivify(d.kind, d.identity, stable, resolverName, rev);
         applied.node++;
 
         for (const ev of d.evidence ?? []) {
@@ -661,7 +736,12 @@ export class Store {
         }
 
         const stable = this.edgeStableId(d.kind, fromStable, toStable, identity);
-        this.upsertEdge(d.kind, fromStable, toStable, identity, stable, props, resolverName, rev);
+        this.contribute("edge", stable, resolverName, props);
+        this.db.prepare(`INSERT OR IGNORE INTO edges
+          (kind, from_stable, to_stable, identity, stable_id, props, owner, created_rev)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          d.kind, fromStable, toStable, canonicalJson(identity), stable, canonicalJson(props), resolverName, rev,
+        );
         applied.edge++;
 
         for (const ev of d.evidence) {
@@ -706,35 +786,8 @@ export class Store {
         applied.claim++;
       }
 
-      // 6. Cleanup: retire this resolver's edges left with no live evidence,
-      //    then its stub nodes no longer referenced by any live edge.
-      const orphanEdges = this.db
-        .prepare(
-          `UPDATE edges SET retired_rev = ? WHERE owner = ? AND retired_rev IS NULL
-           AND NOT EXISTS (SELECT 1 FROM evidence ev WHERE ev.entity_stable = edges.stable_id AND ev.retired_rev IS NULL)`,
-        )
-        .run(rev, resolverName);
-      applied.retired += Number(orphanEdges.changes);
-      const orphanStubs = this.db
-        .prepare(
-          `UPDATE nodes SET retired_rev = ? WHERE owner = ? AND provenance = 'stub' AND retired_rev IS NULL
-           AND NOT EXISTS (SELECT 1 FROM edges e WHERE (e.from_stable = nodes.stable_id OR e.to_stable = nodes.stable_id) AND e.retired_rev IS NULL)
-           AND NOT EXISTS (SELECT 1 FROM evidence ev WHERE ev.entity_stable = nodes.stable_id AND ev.retired_rev IS NULL)`,
-        )
-        .run(rev, resolverName);
-      applied.retired += Number(orphanStubs.changes);
-      //    ...and its previously declared nodes it no longer declares, once
-      //    they have no live evidence and no live edge references (the
-      //    declaring facts were retired, so the declaration retires with them).
-      const staleDeclared = this.db
-        .prepare(
-          `UPDATE nodes SET retired_rev = ? WHERE owner = ? AND provenance = 'declared' AND retired_rev IS NULL
-           AND stable_id NOT IN (SELECT value FROM json_each(?))
-           AND NOT EXISTS (SELECT 1 FROM evidence ev WHERE ev.entity_stable = nodes.stable_id AND ev.retired_rev IS NULL)
-           AND NOT EXISTS (SELECT 1 FROM edges e WHERE (e.from_stable = nodes.stable_id OR e.to_stable = nodes.stable_id) AND e.retired_rev IS NULL)`,
-        )
-        .run(rev, resolverName, JSON.stringify([...declaredNow]));
-      applied.retired += Number(staleDeclared.changes);
+      // 6. Rebuild properties from surviving contributions, then collect orphans.
+      applied.retired += this.reconcileEntities(rev);
 
       this.db.exec("COMMIT");
     } catch (err) {
@@ -755,9 +808,10 @@ export class Store {
   retireAbandonedOwners(activeOwners: string[]) {
     const activeJson = JSON.stringify(activeOwners);
     const abandoned = new Set<string>();
+    for (const row of this.db.prepare(
+      "SELECT DISTINCT resolver FROM entity_contributions WHERE resolver NOT IN (SELECT value FROM json_each(?))",
+    ).all(activeJson)) abandoned.add(String(row.resolver));
     for (const [table, col] of [
-      ["nodes", "owner"],
-      ["edges", "owner"],
       ["evidence", "resolver"],
       ["claims", "resolver"],
       ["aliases", "resolver"],
@@ -779,11 +833,11 @@ export class Store {
     let retired = 0;
     this.db.exec("BEGIN");
     try {
+      this.db.prepare("DELETE FROM entity_contributions WHERE resolver IN (SELECT value FROM json_each(?))").run(ownersJson);
       for (const [table, col] of [
         ["evidence", "resolver"],
         ["claims", "resolver"],
         ["aliases", "resolver"],
-        ["edges", "owner"],
       ] as const) {
         const r = this.db
           .prepare(
@@ -793,21 +847,82 @@ export class Store {
           .run(rev, ownersJson);
         retired += Number(r.changes);
       }
-      const nodes = this.db
-        .prepare(
-          `UPDATE nodes SET retired_rev = ? WHERE retired_rev IS NULL
-           AND owner IN (SELECT value FROM json_each(?))
-           AND NOT EXISTS (SELECT 1 FROM edges e WHERE (e.from_stable = nodes.stable_id OR e.to_stable = nodes.stable_id) AND e.retired_rev IS NULL)
-           AND NOT EXISTS (SELECT 1 FROM evidence ev WHERE ev.entity_stable = nodes.stable_id AND ev.retired_rev IS NULL)`,
-        )
-        .run(rev, ownersJson);
-      retired += Number(nodes.changes);
+      retired += this.reconcileEntities(rev);
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
     }
     return { retired, owners };
+  }
+
+  private contributions(entityType: "node" | "edge", stableId: string) {
+    // SAFETY: these are non-null TEXT columns; props is written as a JSON object.
+    const rows = this.db.prepare(
+      "SELECT resolver, props FROM entity_contributions WHERE entity_type = ? AND entity_stable = ? ORDER BY resolver",
+    ).all(entityType, stableId) as { resolver: string; props: string }[];
+    return rows.map(row => {
+      const props: Properties = JSON.parse(row.props);
+      return { resolver: row.resolver, props };
+    });
+  }
+
+  /** A batch unions repeated declarations; omission retracts only across batches. */
+  private contribute(entityType: "node" | "edge", stableId: string, resolver: string, props: Properties): void {
+    const prior = this.contributions(entityType, stableId).find(row => row.resolver === resolver);
+    const merged = this.mergeContributions(entityType, stableId, [
+      ...(prior ? [prior] : []), { resolver, props },
+    ]);
+    this.db.prepare(`INSERT INTO entity_contributions (entity_type, entity_stable, resolver, props) VALUES (?, ?, ?, ?)
+      ON CONFLICT (entity_type, entity_stable, resolver) DO UPDATE SET props = excluded.props`).run(
+      entityType, stableId, resolver, canonicalJson(merged),
+    );
+  }
+
+  private mergeContributions(entityType: "node" | "edge", stableId: string, rows: { resolver: string; props: Properties }[]): Properties {
+    const props: Properties = {};
+    const owners = new Map<string, string>();
+    for (const row of rows) {
+      for (const [key, value] of Object.entries(row.props)) {
+        if (value === undefined) continue;
+        if (owners.has(key) && canonicalJson(props[key]) !== canonicalJson(value)) {
+          throw new Error(`conflicting ${entityType} property "${key}" on ${stableId}: resolvers "${owners.get(key)}" and "${row.resolver}"`);
+        }
+        Object.defineProperty(props, key, { value, enumerable: true, configurable: true, writable: true });
+        owners.set(key, row.resolver);
+      }
+    }
+    return props;
+  }
+
+  private reconcileEntities(rev: number): number {
+    let retired = 0;
+    for (const edge of this.liveEdges()) {
+      const rows = this.contributions("edge", edge.stableId);
+      if (rows.length === 0 && this.liveEvidenceFor(edge.stableId).length === 0) {
+        this.db.prepare("UPDATE edges SET retired_rev = ? WHERE id = ?").run(rev, edge.id);
+        retired++;
+      } else {
+        const owner = rows.some(row => row.resolver === edge.owner) ? edge.owner : rows[0]?.resolver ?? edge.owner;
+        this.upsertEdge(edge.kind, edge.fromStable, edge.toStable, edge.identity, edge.stableId,
+          this.mergeContributions("edge", edge.stableId, rows), owner, rev);
+      }
+    }
+    for (const node of this.liveNodes()) {
+      const rows = this.contributions("node", node.stableId);
+      const referenced = this.db.prepare(
+        "SELECT 1 FROM edges WHERE (from_stable = ? OR to_stable = ?) AND retired_rev IS NULL LIMIT 1",
+      ).get(node.stableId, node.stableId);
+      if (rows.length === 0 && !referenced && this.liveEvidenceFor(node.stableId).length === 0) {
+        this.db.prepare("UPDATE nodes SET retired_rev = ? WHERE id = ?").run(rev, node.id);
+        retired++;
+      } else {
+        const owner = rows.some(row => row.resolver === node.owner) ? node.owner : rows[0]?.resolver ?? node.owner;
+        this.upsertNode(node.kind, node.identity, node.stableId,
+          this.mergeContributions("node", node.stableId, rows), rows.length > 0 ? "declared" : "stub", owner, rev);
+      }
+    }
+    return retired;
   }
 
   /** Insert a stub for a referenced-but-undeclared node; no-op if a live row exists. */
@@ -839,9 +954,8 @@ export class Store {
   ): void {
     const existing = this.liveNodeByStable(stableId);
     if (existing) {
-      const mergedProps = { ...existing.props, ...props };
       const unchanged =
-        existing.provenance === provenance && canonicalJson(existing.props) === canonicalJson(mergedProps);
+        existing.owner === owner && existing.provenance === provenance && canonicalJson(existing.props) === canonicalJson(props);
       if (unchanged) return;
       // update = retire + insert under the same stable_id
       this.db.prepare(`UPDATE nodes SET retired_rev = ? WHERE id = ?`).run(rev, existing.id);
@@ -850,7 +964,7 @@ export class Store {
           `INSERT INTO nodes (kind, identity, stable_id, props, provenance, owner, created_rev)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(kind, canonicalJson(identity), stableId, JSON.stringify(mergedProps), provenance, owner, rev);
+        .run(kind, canonicalJson(identity), stableId, JSON.stringify(props), provenance, owner, rev);
       return;
     }
     this.db
@@ -871,20 +985,19 @@ export class Store {
     owner: string,
     rev: number,
   ): void {
-    // SAFETY: edges.id is INTEGER and props is non-null JSON TEXT; get may find no live edge.
+    // SAFETY: edges.id is INTEGER and props/owner are non-null TEXT; get may find no live edge.
     const existing = this.db
-      .prepare(`SELECT id, props FROM edges WHERE stable_id = ? AND retired_rev IS NULL`)
-      .get(stableId) as { id: number; props: string } | undefined;
+      .prepare(`SELECT id, props, owner FROM edges WHERE stable_id = ? AND retired_rev IS NULL`)
+      .get(stableId) as { id: number; props: string; owner: string } | undefined;
     if (existing) {
-      const mergedProps = { ...JSON.parse(existing.props), ...props };
-      if (canonicalJson(JSON.parse(existing.props)) === canonicalJson(mergedProps)) return;
+      if (existing.owner === owner && canonicalJson(JSON.parse(existing.props)) === canonicalJson(props)) return;
       this.db.prepare(`UPDATE edges SET retired_rev = ? WHERE id = ?`).run(rev, existing.id);
       this.db
         .prepare(
           `INSERT INTO edges (kind, from_stable, to_stable, identity, stable_id, props, owner, created_rev)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(kind, fromStable, toStable, canonicalJson(identity), stableId, JSON.stringify(mergedProps), owner, rev);
+        .run(kind, fromStable, toStable, canonicalJson(identity), stableId, JSON.stringify(props), owner, rev);
       return;
     }
     this.db
@@ -895,6 +1008,18 @@ export class Store {
       .run(kind, fromStable, toStable, canonicalJson(identity), stableId, JSON.stringify(props), owner, rev);
   }
 
+  /** Preserve alias-merge precedence while moving the surviving property owners. */
+  private moveContributions(entityType: "node" | "edge", from: string, to: string, winningProps: Properties): void {
+    const rows = [...this.contributions(entityType, to), ...this.contributions(entityType, from)];
+    this.db.prepare("DELETE FROM entity_contributions WHERE entity_type = ? AND entity_stable IN (?, ?)").run(entityType, from, to);
+    for (const row of rows) {
+      const props = Object.fromEntries(Object.entries(row.props).filter(
+        ([key, value]) => canonicalJson(value) === canonicalJson(winningProps[key]),
+      ));
+      this.contribute(entityType, to, row.resolver, props);
+    }
+  }
+
   /** Merge an alias node's observations into the canonical node (retire + re-point). */
   private mergeNodeInto(aliasStable: string, canonicalStable: string, rev: number): void {
     if (aliasStable === canonicalStable) return;
@@ -903,6 +1028,7 @@ export class Store {
       this.db.prepare(`UPDATE nodes SET retired_rev = ? WHERE id = ?`).run(rev, aliasNode.id);
       // Fold props into the canonical node if it exists and lacks them.
       const canonNode = this.liveNodeByStable(canonicalStable);
+      this.moveContributions("node", aliasStable, canonicalStable, { ...aliasNode.props, ...canonNode?.props });
       if (canonNode && Object.keys(aliasNode.props).length > 0) {
         this.upsertNode(
           canonNode.kind,
@@ -925,7 +1051,11 @@ export class Store {
       const fromStable = e.fromStable === aliasStable ? canonicalStable : e.fromStable;
       const toStable = e.toStable === aliasStable ? canonicalStable : e.toStable;
       const newStable = this.edgeStableId(e.kind, fromStable, toStable, e.identity);
-      this.upsertEdge(e.kind, fromStable, toStable, e.identity, newStable, e.props, e.owner, rev);
+      const target = this.db.prepare("SELECT props FROM edges WHERE stable_id = ? AND retired_rev IS NULL").get(newStable);
+      const targetProps: Properties = target ? JSON.parse(String(target.props)) : {};
+      const mergedProps = { ...targetProps, ...e.props };
+      this.moveContributions("edge", e.stableId, newStable, mergedProps);
+      this.upsertEdge(e.kind, fromStable, toStable, e.identity, newStable, mergedProps, e.owner, rev);
       // Re-point the edge's evidence (retire + reinsert keeps append-only history).
       const evRows = this.liveEvidenceFor(e.stableId);
       for (const ev of evRows) {

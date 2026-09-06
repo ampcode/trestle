@@ -326,9 +326,10 @@ export default function (amp: PluginAPI) {
 			'Call a remote Trestle tool: graph_evidence (live evidence and source locations for a node/edge stableId), ' +
 			'survey (unresolved work), status (counts), doctor (health). ' +
 			'Coordination manages provider-neutral units, sessions, artifacts, and bookmarks; takes a camelCase operation, arguments object, and requestId for mutations. ' +
-			'For graph_evidence pass arguments {entityType: "node"|"edge", stableId, limit?: 1..200, afterId?: nextAfterId}. ' +
+			'For graph_evidence pass arguments {entityType: "node"|"edge", stableId, limit?: 1..200, afterId?: nextAfterId, expectedGeneration?: generation}. ' +
 			'Results distinguish live/retired/not_found; empty evidence is valid. Referenced facts may be retired. ' +
-			'Page with nextAfterId; restart if revision changes. Uses the default portal unless portal_url is given.',
+			'Page with nextAfterId and the first page generation as expectedGeneration; restart at afterId 0 on mismatch. ' +
+			'Without the guard, discard pages if generation differs. Revision is provenance only. Uses the default portal unless portal_url is given.',
 		inputSchema: {
 			type: 'object',
 			properties: {

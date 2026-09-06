@@ -222,7 +222,8 @@ export const TOOLS: ToolDef[] = [
       "Returns resolver/version/rule/note, explicit sourcePath/locator, and the exact referenced fact with its " +
       "sourcePath/locator/authority and retirement revisions. Null locations are not inferred. " +
       "Status distinguishes live (possibly empty evidence), retired, and not_found entities. Retired evidence is excluded. " +
-      "Use nextAfterId as afterId to page; restart if revision changes between pages.",
+      "Page with nextAfterId as afterId and generation as expectedGeneration; on a generation mismatch restart at afterId 0. " +
+      "Without expectedGeneration, compare page generations and discard all pages if they differ. Revision is provenance, not a mutation token.",
     inputSchema: {
       type: "object",
       properties: {
@@ -230,6 +231,7 @@ export const TOOLS: ToolDef[] = [
         stableId: { type: "string", minLength: 1, description: "The node or relationship stableId returned by graph_query." },
         limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
         afterId: { type: "integer", minimum: 0, default: 0, description: "Evidence row cursor from nextAfterId; not a graph ID." },
+        expectedGeneration: { type: "integer", minimum: 0, description: "Generation from the first page; rejects intervening committed mutations." },
       },
       required: ["entityType", "stableId"],
     },
@@ -240,9 +242,14 @@ export const TOOLS: ToolDef[] = [
       const afterId = args.afterId === undefined ? 0 : args.afterId;
       if (!isNumber(limit)) throw new Error("limit must be a number");
       if (!isNumber(afterId)) throw new Error("afterId must be a number");
+      let expectedGeneration: number | undefined;
+      if (args.expectedGeneration !== undefined) {
+        if (!isNumber(args.expectedGeneration)) throw new Error("expectedGeneration must be a number");
+        expectedGeneration = args.expectedGeneration;
+      }
       const store = openStore(cfg);
       try {
-        return JSON.stringify(store.graphEvidence(args.entityType, args.stableId, limit, afterId), null, 2);
+        return JSON.stringify(store.graphEvidence(args.entityType, args.stableId, limit, afterId, expectedGeneration), null, 2);
       } finally {
         store.close();
       }

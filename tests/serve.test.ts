@@ -262,9 +262,16 @@ test("graph_evidence retrieves query IDs, provenance and bounded pages through M
   assert.equal(expectObject(evidence.fact).sourcePath, evidence.sourcePath);
   assert.equal(expectObject(evidence.fact).retiredRev, null);
   const second = expectObject(JSON.parse((await call("graph_evidence", {
-    entityType: "edge", stableId, limit: 1, afterId: page.nextAfterId,
+    entityType: "edge", stableId, limit: 1, afterId: page.nextAfterId, expectedGeneration: page.generation,
   })).text));
   assert.equal(second.revision, page.revision);
+  assert.equal(second.generation, page.generation);
+  assert.ok(isNumber(page.generation));
+  const mismatch = await call("graph_evidence", {
+    entityType: "edge", stableId, afterId: page.nextAfterId, expectedGeneration: page.generation + 1,
+  });
+  assert.equal(mismatch.isError, true);
+  assert.match(mismatch.text, /generation changed; restart/);
   assert.equal(second.truncated, false);
   assert.equal(second.nextAfterId, null);
   assert.equal(expectObject(expectArray(second.evidence)[0]).sourcePath, "resources.txt");
@@ -288,6 +295,7 @@ test("graph_evidence validates IDs and pagination at the MCP boundary", async ()
     {}, { entityType: "fact", stableId: "x" }, { entityType: "node", stableId: " " },
     ...[0, -1, 201, 1.5, "1", null].map(limit => ({ entityType: "node", stableId: "x", limit })),
     ...[-1, 0.5, "1", null, Number.MAX_SAFE_INTEGER + 1].map(afterId => ({ entityType: "node", stableId: "x", afterId })),
+    ...[-1, 0.5, "1", null, Number.MAX_SAFE_INTEGER + 1].map(expectedGeneration => ({ entityType: "node", stableId: "x", expectedGeneration })),
   ]) {
     assert.equal((await call("graph_evidence", args)).isError, true, JSON.stringify(args));
   }

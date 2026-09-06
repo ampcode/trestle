@@ -163,7 +163,7 @@ use `entityType: "node"`. In Amp, use the existing portal authentication and:
 {"tool":"graph_evidence","arguments":{"entityType":"edge","stableId":"<edgeId>","limit":50}}
 ```
 
-Pass that object to `trestle_call`. The response contains `revision`,
+Pass that object to `trestle_call`. The response contains `revision`, `generation`,
 `entityType`, `stableId`, `kind`, `status`, `retiredRev`, `evidence`, `limit`,
 `afterId`, `truncated`, and `nextAfterId`. Each evidence record includes its
 row `id`, `sourcePath`, decoded `locator`, `resolver`, `resolverVersion`,
@@ -182,11 +182,43 @@ not replaced with a newer fact.
 
 Results are ordered by evidence row ID. `limit` defaults to 50 (1–200);
 when `truncated` is true, pass `nextAfterId` as `afterId` for the next page.
-Each request reads one SQLite snapshot; restart pagination if `revision`
-changes. Page size bounds records, not bytes. Retrieval reads the current
+Also pass the first page's `generation` as `expectedGeneration`: an intervening
+committed mutation rejects the request. On mismatch, discard accumulated pages
+and restart at `afterId: 0` without the old guard. For compatibility the guard
+is optional; clients omitting it must compare `generation` on every page and
+restart if it differs. Each request reads one SQLite snapshot. `revision` is
+only a run/provenance ID and cannot detect mutations within one extraction run.
+`generation` is a durable store-wide mutation token, not a commit count: it
+changes transactionally with facts, graph entities, evidence, contributions,
+aliases, claims, decisions and profile activation, and rolls back with failed
+writes. Run allocation and unchanged memo-cell skips do not change it. A
+resolver rerun replaces evidence rows, so it invalidates pagination even when
+the logical graph is unchanged. Page size bounds records, not bytes. Retrieval reads the current
 authoritative store without rebuilding the projection, so an older Cypher
 result can identify an entity that has since retired. Stable IDs are looked
 up exactly; aliases are not followed.
+
+### Resolver contributions
+
+Each resolver run replaces that resolver's node/edge declarations, properties,
+and evidence atomically. Repeated declarations within a run union properties.
+Across resolvers, disjoint properties enrich the entity and equal values may
+be shared. Different values for the same property reject the whole batch with
+the property and resolver names; there is no last-writer precedence. Omitting
+a property on the next run retracts that resolver's value. Another resolver's
+equal value or independent enrichment remains. The legacy `owner` field is a
+representative contributor, not exclusive ownership.
+
+Removing or renaming a resolver retires only its contributions. Shared entities
+survive; a node whose declarations disappear but which remains an edge endpoint
+becomes a property-free stub. Existing alias identity/re-pointing behavior is
+unchanged, including canonical-node property precedence during a merge.
+
+On older stores, migration preserves existing properties under the recorded
+owner and preserves other live evidence contributors with empty property sets.
+The old store did not record property attribution, so it cannot be recovered
+exactly: rerun all resolvers to establish explicit contributions. Resolve any
+newly reported conflicting values rather than relying on prior resolver order.
 
 The explorer is already bundled. Its HTML response includes preload hints
 for `/api/graph` and the pinned G6VP icon resources, so high-latency clients
