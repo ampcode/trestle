@@ -369,7 +369,7 @@ async function projectBuild(cwd: string, overrides: TrestleConfig): Promise<void
     const r = await buildProjection(store, cfg.projectionPath);
     console.log(
       `projection @ ${relative(cwd, r.path)}: ${r.nodeTables} node tables, ${r.relTables} rel tables; ` +
-        `${r.nodes} nodes, ${r.edges} edges`,
+        `${r.nodes} nodes, ${r.edges} edges; source generation ${r.sourceGeneration}`,
     );
   } finally {
     store.close();
@@ -378,9 +378,10 @@ async function projectBuild(cwd: string, overrides: TrestleConfig): Promise<void
 
 async function projectQuery(cwd: string, overrides: TrestleConfig, cypher: string | undefined): Promise<void> {
   if (!cypher) throw new Error(`usage: trestle project query '<cypher>'`);
-  const { queryProjection } = await import("../project/ladybug.ts");
+  const { queryProjectionWithMetadata } = await import("../project/ladybug.ts");
   const cfg = await loadConfig(cwd, overrides);
-  const rows = await queryProjection(cfg.projectionPath, cypher);
+  const { rows, sourceGeneration } = await queryProjectionWithMetadata(cfg.projectionPath, cypher);
+  console.error(`projection source generation: ${sourceGeneration ?? "unknown (rebuild legacy projection)"}`);
   console.log(JSON.stringify(rows, null, 2));
 }
 

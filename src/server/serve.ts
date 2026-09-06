@@ -16,7 +16,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join, resolve, sep } from "node:path";
 import { isProfileLock, profileFromLock } from "../profile/define.ts";
-import { queryProjection } from "../project/ladybug.ts";
+import { queryProjectionWithMetadata } from "../project/ladybug.ts";
 import { Store } from "../store/store.ts";
 import { Coordination, callCoordination, coordinationSchema } from "../coordination/index.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
@@ -198,21 +198,28 @@ export const TOOLS: ToolDef[] = [
   {
     name: "graph_query",
     description:
-      "Run a Cypher query against the project's knowledge-graph projection. " +
+      "Run one read-only Cypher query against the project's knowledge-graph projection. " +
       "Node tables = node kinds (identity + scalar props as columns, propsJson, provenance); " +
       "rel tables = edge kinds with evidenceCount. " +
-      "Kind names with dashes become underscores. Returns rows as JSON. " +
+      "Kind names with dashes become underscores. Returns rows as JSON, or {rows, sourceGeneration} with includeMetadata. " +
+      "Compare sourceGeneration with graph_evidence generation to detect stale projections; null means rebuild a legacy projection. " +
       "Return node/rel stableId (not database IDs), then use graph_evidence for supporting source locations.",
     inputSchema: {
       type: "object",
-      properties: { cypher: { type: "string", description: "The Cypher query to run." } },
+      properties: {
+        cypher: { type: "string", description: "The read-only Cypher query to run." },
+        includeMetadata: { type: "boolean", description: "Return rows and the source committed-data generation." },
+      },
       required: ["cypher"],
     },
     async run(cfg, args) {
       const cypher = args.cypher;
       if (!isString(cypher) || cypher.trim() === "") throw new Error("graph_query requires a cypher string");
-      const rows = await queryProjection(cfg.projectionPath, cypher);
-      return JSON.stringify(rows, null, 2);
+      if (args.includeMetadata !== undefined && args.includeMetadata !== true && args.includeMetadata !== false) {
+        throw new Error("includeMetadata must be a boolean");
+      }
+      const result = await queryProjectionWithMetadata(cfg.projectionPath, cypher);
+      return JSON.stringify(args.includeMetadata ? result : result.rows, null, 2);
     },
   },
   {
@@ -473,7 +480,9 @@ export function startServer(cfg: ServeConfig, opts: { port: number; host?: strin
           sendJson(res, 400, { error: "query must be a non-empty string" });
           return;
         }
-        sendJson(res, 200, await queryProjection(cfg.projectionPath, body.query));
+        const result = await queryProjectionWithMetadata(cfg.projectionPath, body.query);
+        res.setHeader("X-Trestle-Source-Generation", String(result.sourceGeneration));
+        sendJson(res, 200, result.rows);
         return;
       }
       if (req.method === "GET" && serveVisualizationAsset(res, pathname)) return;

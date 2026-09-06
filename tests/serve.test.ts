@@ -384,3 +384,39 @@ test("protocol errors: unknown method, unknown tool, parse error, batch", async 
   assert.equal(batch.status, 200);
   assert.equal(expectArray(batch.json).length, 2); // notification excluded
 });
+
+test("query consumers reject writes and expose the source generation without changing default rows", async () => {
+  const mutation = 'MATCH (m:Module) WHERE m.name = "A" SET m.name = "MUTATED" RETURN m.name AS name';
+  for (const cypher of [mutation, `RETURN 1; ${mutation}`, `${mutation}; RETURN 1`]) {
+    const mcp = await call("graph_query", { cypher });
+    assert.equal(mcp.isError, true);
+    assert.match(mcp.text, /read.only|one statement/i);
+    const http = await fetch(`http://127.0.0.1:${running.port}/api/query`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: cypher }),
+    });
+    assert.equal(http.status, 500); // existing HTTP query-error contract
+    assert.match(await http.text(), /read.only|one statement/i);
+  }
+  const query = "MATCH (m:Module) RETURN m.name AS name ORDER BY name";
+  const mcp = await call("graph_query", { cypher: query, includeMetadata: true });
+  assert.equal(mcp.isError, false);
+  const result = expectObject(JSON.parse(mcp.text));
+  assert.ok(isNumber(result.sourceGeneration));
+  assert.deepEqual(result.rows, FIXTURE.modules.map((name) => ({ name })));
+  const http = await fetch(`http://127.0.0.1:${running.port}/api/query`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  assert.equal(http.status, 200);
+  assert.equal(http.headers.get("X-Trestle-Source-Generation"), String(result.sourceGeneration));
+  assert.deepEqual(await http.json(), result.rows);
+  const store = new Store(join(stateDir, "trestle.db"));
+  try {
+    assert.deepEqual(store.liveNodes("Module").map((node) => node.identity.name).sort(), FIXTURE.modules);
+  } finally {
+    store.close();
+  }
+});

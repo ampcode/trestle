@@ -12,11 +12,12 @@
  * @ladybugdb/core is loaded lazily so the rest of the CLI never pays for
  * its native module.
  */
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { Connection, Database, LbugValue } from "@ladybugdb/core";
 import type { Profile } from "../profile/define.ts";
 import type { PropSchema } from "../profile/schema.ts";
-import { isNumber, type JsonValue } from "../profile/value.ts";
+import { isNumber, isProperties, isString, type JsonValue } from "../profile/value.ts";
 import type { Store } from "../store/store.ts";
 
 type LbugModule = Pick<typeof import("@ladybugdb/core"), "Database" | "Connection">;
@@ -57,13 +58,8 @@ interface Handle {
 async function closeHandle(handle: Handle): Promise<void> {
   try {
     await handle.conn.close();
-  } catch {
-    // closing is best-effort; the database close below still runs
-  }
-  try {
+  } finally {
     await handle.db.close();
-  } catch {
-    // ignore
   }
 }
 
@@ -90,34 +86,33 @@ function isLockError(err: unknown): err is Error {
 }
 
 /**
- * LadybugDB allows a single process per database. Concurrent `project query`
- * invocations (common when agents fan out) would otherwise fail immediately
- * with a lock error, so retry with backoff for a bounded window.
+ * Read-only databases share locks. Retry legacy projections held by a writer;
+ * newly built generations are closed before publication and never written again.
  */
-async function connect(lbug: LbugModule, dbPath: string, timeoutMs = 10_000): Promise<Handle> {
+async function connect(lbug: LbugModule, dbPath: string, readOnly: boolean, timeoutMs = 10_000): Promise<Handle> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     let db: Handle["db"] | null = null;
+    let conn: Handle["conn"] | null = null;
     try {
-      db = new lbug.Database(dbPath);
-      const conn = new lbug.Connection(db);
+      db = new lbug.Database(dbPath, 0, true, readOnly);
+      await db.init();
+      conn = new lbug.Connection(db);
       const handle: Handle = { conn, db };
       await exec(handle, "RETURN 1"); // the file lock is taken lazily; force it now
       return handle;
     } catch (err) {
-      if (db) {
-        try {
-          await db.close();
-        } catch {
-          // ignore
-        }
+      try {
+        if (conn) await conn.close();
+      } finally {
+        if (db) await db.close();
       }
       if (!isLockError(err)) throw err;
       if (Date.now() >= deadline) {
         throw new Error(
           `projection database at ${dbPath} is locked by another process ` +
-            `(LadybugDB allows one process at a time; retried for ${Math.round(timeoutMs / 1000)}s)\n` +
-            `  run project queries sequentially, or wait for the other process to finish`,
+            `(a writer holds an exclusive lock; retried for ${Math.round(timeoutMs / 1000)}s)\n` +
+            `  wait for the other process to finish`,
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -148,6 +143,7 @@ function lit(value: JsonValue): string {
 
 export interface ProjectionResult {
   path: string;
+  sourceGeneration: number;
   nodeTables: number;
   relTables: number;
   nodes: number;
@@ -177,15 +173,55 @@ function edgeColumns(def: Profile["edges"][string]): { name: string; type: strin
 
 export async function buildProjection(store: Store, dbPath: string): Promise<ProjectionResult> {
   const lbug = await loadLbug();
-  const profile = store.requireProfile();
-  // Regenerable by design — remove the database and its WAL/temp siblings;
-  // a stale .wal/.shadow from a prior database ID makes the fresh one
-  // refuse to open.
-  for (const p of [dbPath, `${dbPath}.wal`, `${dbPath}.shm`, `${dbPath}.shadow`]) {
-    if (existsSync(p)) rmSync(p, { recursive: true, force: true });
+  mkdirSync(dirname(dbPath), { recursive: true });
+  // Cross-process builder exclusion, held from snapshot through publication.
+  // Never steal a lock: after a crashed builder it must be removed offline.
+  const lock = `${dbPath}.build-lock`;
+  try {
+    mkdirSync(lock);
+  } catch (error) {
+    if (existsSync(lock)) throw new Error(`projection build locked at ${lock}; wait for the builder, or remove the lock after confirming it has stopped`);
+    throw error;
   }
-  const handle = await connect(lbug, dbPath);
-  const result: ProjectionResult = { path: dbPath, nodeTables: 0, relTables: 0, nodes: 0, edges: 0 };
+  try {
+    const snapshot = projectionSnapshot(store);
+    const directory = mkdtempSync(`${dbPath}.generation-`);
+    const generationPath = join(directory, "data.lbug");
+    const manifest = join(directory, "manifest.json");
+    // Retain failed generations too: a failed native close may still hold a lock.
+    const result = await materialize(lbug, snapshot, generationPath);
+    // A successful close alone is insufficient: verify clean read-only reopen.
+    const reader = await connect(lbug, generationPath, true);
+    await closeHandle(reader);
+    writeFileSync(manifest, JSON.stringify({ directory: basename(directory), sourceGeneration: snapshot.sourceGeneration }));
+    // Only the small pointer is renamed, never an open Ladybug database.
+    renameSync(manifest, `${dbPath}.current.json`);
+    return { ...result, path: dbPath };
+  } finally {
+    rmSync(lock, { recursive: true });
+  }
+}
+
+/** No awaits while the SQLite read transaction is open on the caller's Store. */
+function projectionSnapshot(store: Store) {
+  store.db.exec("BEGIN");
+  try {
+    const sourceGeneration = store.currentGeneration();
+    const profile = structuredClone(store.requireProfile());
+    const nodes = store.liveNodes();
+    const edges = store.liveEdges().map((edge) => ({ ...edge, evidenceCount: store.liveEvidenceFor(edge.stableId).length }));
+    store.db.exec("COMMIT");
+    return { sourceGeneration, profile, nodes, edges };
+  } catch (error) {
+    store.db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+async function materialize(lbug: LbugModule, snapshot: ReturnType<typeof projectionSnapshot>, dbPath: string): Promise<ProjectionResult> {
+  const { profile, sourceGeneration } = snapshot;
+  const handle = await connect(lbug, dbPath, false);
+  const result: ProjectionResult = { path: dbPath, sourceGeneration, nodeTables: 0, relTables: 0, nodes: 0, edges: 0 };
 
   try {
     // ---- DDL from the profile ----
@@ -217,7 +253,7 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
     const kindOfStable = new Map<string, string>();
     for (const [kind, def] of Object.entries(profile.nodes)) {
       const cols = nodeColumns(def);
-      for (const n of store.liveNodes(kind)) {
+      for (const n of snapshot.nodes.filter((node) => node.kind === kind)) {
         kindOfStable.set(n.stableId, kind);
         const values = cols.map((c) => lit(c.fromProps ? n.props[c.name] : n.identity[c.name]));
         const extras = Object.fromEntries(
@@ -236,21 +272,21 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
     // ---- edges (evidenceCount derived from live evidence) ----
     for (const [kind, def] of Object.entries(profile.edges)) {
       const cols = edgeColumns(def);
-      for (const e of store.liveEdges(kind)) {
+      for (const e of snapshot.edges.filter((edge) => edge.kind === kind)) {
         const fromKind = kindOfStable.get(e.fromStable);
         const toKind = kindOfStable.get(e.toStable);
         if (!fromKind || !toKind) continue; // endpoint not live; orphan cleanup owns this
-        const evidence = store.liveEvidenceFor(e.stableId);
         await exec(
           handle,
           `MATCH (a:${ident(tableName(fromKind))} {stableId: ${lit(e.fromStable)}}), (b:${ident(tableName(toKind))} {stableId: ${lit(e.toStable)}}) ` +
             `CREATE (a)-[:${ident(tableName(kind))} {stableId: ${lit(e.stableId)}, ` +
             cols.map((c) => `${ident(c.name)}: ${lit(e.props[c.name])}, `).join("") +
-            `evidenceCount: ${evidence.length}}]->(b)`,
+            `evidenceCount: ${e.evidenceCount}}]->(b)`,
         );
         result.edges++;
       }
     }
+    await exec(handle, "CHECKPOINT");
   } finally {
     await closeHandle(handle);
   }
@@ -260,13 +296,35 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
 
 /** Open an existing projection and run one Cypher query. */
 export async function queryProjection(dbPath: string, cypher: string): Promise<Record<string, LbugValue>[]> {
+  return (await queryProjectionWithMetadata(dbPath, cypher)).rows;
+}
+
+/** Metadata and rows always refer to the same immutable published generation. */
+export async function queryProjectionWithMetadata(dbPath: string, cypher: string): Promise<{
+  rows: Record<string, LbugValue>[];
+  sourceGeneration: number | null;
+}> {
   const lbug = await loadLbug();
-  if (!existsSync(dbPath)) {
+  const pointer = `${dbPath}.current.json`;
+  let generationPath = dbPath;
+  let sourceGeneration: number | null = null;
+  if (existsSync(pointer)) {
+    const manifest: JsonValue = JSON.parse(readFileSync(pointer, "utf8"));
+    if (!isProperties(manifest) || !isString(manifest.directory) ||
+        basename(manifest.directory) !== manifest.directory ||
+        !manifest.directory.startsWith(`${basename(dbPath)}.generation-`) ||
+        !isNumber(manifest.sourceGeneration) || !Number.isSafeInteger(manifest.sourceGeneration) || manifest.sourceGeneration < 0) {
+      throw new Error(`invalid projection manifest at ${pointer}; rebuild the projection`);
+    }
+    generationPath = join(dirname(dbPath), manifest.directory, "data.lbug");
+    sourceGeneration = manifest.sourceGeneration;
+  }
+  if (!existsSync(generationPath)) {
     throw new Error(`no projection at ${dbPath}; run \`trestle project build\` first`);
   }
-  const handle = await connect(lbug, dbPath);
+  const handle = await connect(lbug, generationPath, true);
   try {
-    return await all(handle, cypher);
+    return { rows: await all(handle, cypher), sourceGeneration };
   } finally {
     await closeHandle(handle);
   }

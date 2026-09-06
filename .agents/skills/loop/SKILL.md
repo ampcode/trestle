@@ -19,8 +19,17 @@ trestle project query 'MATCH ...'   # query it
 
 The projection is derived and disposable — rebuild it after any resolve.
 Node kinds become node tables, edge kinds become rel tables with an
-`evidenceCount` column. It admits one process at a time, so run
-`project query` calls sequentially, not in parallel.
+`evidenceCount` column; both expose `stableId` for evidence retrieval.
+Read-only queries may run concurrently. Builds exclude other builders and
+publish immutable generations while existing readers keep their snapshot.
+See README "Projection consistency and upgrades" for cleanup and recovery.
+
+For supporting source locations, use `graph_evidence` with the query's
+`stableId` and `entityType: "node"` or `"edge"`. Page with `nextAfterId`
+and the first page's `generation` as `expectedGeneration`; restart from
+the first page on mismatch. Run `revision` is provenance, not a mutation
+token. Query metadata's `sourceGeneration` identifies the projection's
+source snapshot; compare it with evidence `generation` to detect staleness.
 
 Facts persist: iterating on resolvers needs only `resolve` + `survey`.
 Re-run `extract` after corpus, pipeline, or profile changes. Everything is

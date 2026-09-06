@@ -305,19 +305,23 @@ export default function (amp: PluginAPI) {
 	amp.registerTool({
 		name: 'trestle_query',
 		description:
-			'Run a raw Cypher query against a Trestle knowledge graph served behind an Amp portal. ' +
+			'Run a read-only Cypher query against a Trestle knowledge graph served behind an Amp portal. ' +
 			'Return node/rel stableId, then use trestle_call graph_evidence for supporting source locations. ' +
+			'With includeMetadata, returns {rows, sourceGeneration}; compare it with evidence generation to detect staleness. ' +
 			'Uses the default portal from the last trestle_auth unless portal_url is given. ' +
 			'If not authenticated, the result explains how to log in.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				cypher: { type: 'string', description: 'Cypher query, e.g. MATCH (n) RETURN count(n)' },
+				includeMetadata: { type: 'boolean', description: 'Return rows with their source generation; null means a legacy projection needs rebuilding.' },
 				portal_url: { type: 'string', description: 'Portal URL of the trestle serve endpoint (optional)' },
 			},
 			required: ['cypher'],
 		},
-		execute: (input) => callRemote(input.portal_url, 'graph_query', { cypher: String(input.cypher) }),
+		execute: (input) => callRemote(input.portal_url, 'graph_query', {
+			cypher: String(input.cypher), includeMetadata: input.includeMetadata,
+		}),
 	})
 
 	amp.registerTool({

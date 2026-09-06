@@ -253,6 +253,47 @@ Git corpora are pinned by submodule SHA; archive corpora are pinned by a
 committed `corpora/<name>.source.json` manifest. Neither commits corpus
 bytes to your graph repo.
 
+## Projection consistency and upgrades
+
+Cypher queries use Ladybug's database-level read-only mode, including CLI,
+MCP `graph_query`, and HTTP `/api/query`. Mutations cannot change the
+projection, even in multi-statement input; queries must return one statement's
+result. SQLite remains authoritative.
+
+`project build` captures graph rows, evidence counts, and `Store.currentGeneration()`
+in one synchronous SQLite read transaction before materialization. The generation
+is an opaque committed-data equality token, not a run/revision number. A build
+inside an existing Store transaction is rejected rather than publishing uncommitted
+data. Detailed evidence remains in SQLite.
+
+Builds create immutable `projection.lbug.generation-*/data.lbug` databases,
+checkpoint and close the writer, verify a read-only reopen, then atomically replace
+`projection.lbug.current.json`. Readers resolve this manifest once per query.
+Builders exclude one another with `projection.lbug.build-lock`; a competing build
+fails with a retry message. Failed rebuilds leave the last published generation
+usable. No open database is renamed or deleted. Old and failed generation
+directories are retained: remove unreferenced directories only after stopping all
+readers/builders. A crashed builder's lock also requires removal after confirming
+that the builder has stopped. Publication is atomic on the local filesystem;
+this is not a power-loss durability guarantee.
+
+Existing single-file projections still open read-only, with unknown source
+generation (`null`). Rebuild to publish the new format and obtain a generation;
+the legacy file remains untouched. Downgrading requires an offline rebuild with
+the old engine, which does not understand manifests.
+
+Existing row-array responses remain compatible. Source-generation reporting:
+
+- `buildProjection` returns `sourceGeneration`; CLI build output includes it.
+- `queryProjectionWithMetadata` returns `{rows, sourceGeneration}`;
+  `queryProjection` still returns rows only.
+- MCP `graph_query` accepts `includeMetadata: true` for that envelope. Compare its
+  generation with `graph_evidence.generation` to detect staleness.
+- Amp `trestle_query` accepts the same `includeMetadata: true` option.
+- HTTP `/api/query` keeps its row-array body and adds
+  `X-Trestle-Source-Generation` (`null` for legacy projections).
+- CLI `project query` keeps JSON rows on stdout and prints generation on stderr.
+
 ## Development checks
 
 ```sh
