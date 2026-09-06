@@ -1,0 +1,115 @@
+{
+  "trestleLockVersion": 1,
+  "hash": "d10a71a978e5a403b219c105ec5ac70eabfdf92047d4192611e45447a55a9cdc",
+  "profile": {
+    "edges": {
+      "REFERENCES": {
+        "from": [
+          "File"
+        ],
+        "identity": [],
+        "props": {},
+        "to": [
+          "Function"
+        ]
+      },
+      "SAME_BODY": {
+        "from": [
+          "Function"
+        ],
+        "identity": [],
+        "props": {},
+        "to": [
+          "Function"
+        ]
+      },
+      "SIMILAR_BODY": {
+        "from": [
+          "Function"
+        ],
+        "identity": [],
+        "props": {},
+        "to": [
+          "Function"
+        ]
+      }
+    },
+    "facts": {
+      "file-parsed": {
+        "props": {
+          "path": {
+            "t": "string"
+          }
+        },
+        "version": 1
+      },
+      "function-declared": {
+        "props": {
+          "bodyHash": {
+            "t": "string"
+          },
+          "category": {
+            "t": "string"
+          },
+          "exported": {
+            "t": "boolean"
+          },
+          "key": {
+            "t": "string"
+          },
+          "name": {
+            "t": "string"
+          },
+          "normalizedBodyHash": {
+            "t": "string"
+          },
+          "path": {
+            "t": "string"
+          },
+          "tokens": {
+            "t": "number"
+          }
+        },
+        "version": 2
+      },
+      "reference-observed": {
+        "props": {
+          "target": {
+            "t": "string"
+          }
+        },
+        "version": 1
+      }
+    },
+    "nodes": {
+      "File": {
+        "identity": [
+          "path"
+        ],
+        "props": {}
+      },
+      "Function": {
+        "identity": [
+          "key"
+        ],
+        "props": {
+          "category": {
+            "t": "string"
+          },
+          "exported": {
+            "t": "boolean"
+          },
+          "name": {
+            "t": "string"
+          },
+          "path": {
+            "t": "string"
+          },
+          "tokens": {
+            "t": "number"
+          }
+        }
+      }
+    }
+  }
+}
