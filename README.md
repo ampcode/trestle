@@ -144,6 +144,50 @@ graph.
   can attach to.
 - **`/api/query`** — Cypher over the LadybugDB projection (`project build`).
 
+### Retrieving supporting evidence
+
+After upgrading, run `npx trestle project build` once to add relationship
+`stableId` columns to an existing projection.
+
+Query `stableId` (not Ladybug's internal IDs), for example:
+
+```cypher
+MATCH (a)-[e]->(b) RETURN e.stableId AS edgeId LIMIT 10
+```
+
+Call the MCP tool `graph_evidence` with
+`{"entityType":"edge","stableId":"<edgeId>","limit":50}`. For node IDs,
+use `entityType: "node"`. In Amp, use the existing portal authentication and:
+
+```json
+{"tool":"graph_evidence","arguments":{"entityType":"edge","stableId":"<edgeId>","limit":50}}
+```
+
+Pass that object to `trestle_call`. The response contains `revision`,
+`entityType`, `stableId`, `kind`, `status`, `retiredRev`, `evidence`, `limit`,
+`afterId`, `truncated`, and `nextAfterId`. Each evidence record includes its
+row `id`, `sourcePath`, decoded `locator`, `resolver`, `resolverVersion`,
+`rule`, `note`, `createdRev`, `retiredRev`, `factId`, and the exact referenced
+`fact` (kind/version/cell, sourcePath/locator, authority, props, and revisions).
+Evidence locations and fact locations are preserved separately, not combined
+or inferred. Null means absent; a non-null `factId` with null `fact` is a
+dangling reference. No source file contents are read or returned.
+
+Only live evidence on live entities is returned. A live entity can have no
+evidence (notably a stub); `status: "retired"` and `status: "not_found"`
+also return empty evidence. The wrong entity type is `not_found`. Retired
+evidence history is not exposed. A live evidence row can still reference a
+retired fact; its original provenance and `fact.retiredRev` are returned,
+not replaced with a newer fact.
+
+Results are ordered by evidence row ID. `limit` defaults to 50 (1–200);
+when `truncated` is true, pass `nextAfterId` as `afterId` for the next page.
+Each request reads one SQLite snapshot; restart pagination if `revision`
+changes. Page size bounds records, not bytes. Retrieval reads the current
+authoritative store without rebuilding the projection, so an older Cypher
+result can identify an entity that has since retired. Stable IDs are looked
+up exactly; aliases are not followed.
+
 The explorer is already bundled. Its HTML response includes preload hints
 for `/api/graph` and the pinned G6VP icon resources, so high-latency clients
 can fetch them alongside the app instead of waiting for JavaScript execution.

@@ -21,7 +21,7 @@ import { Store } from "../store/store.ts";
 import { Coordination, callCoordination, coordinationSchema } from "../coordination/index.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import type { VisualizationConfig } from "../cli/config.ts";
-import { isString, isProperties, type JsonValue, type Properties } from "../profile/value.ts";
+import { isString, isNumber, isProperties, type JsonValue, type Properties } from "../profile/value.ts";
 import type { LbugValue } from "@ladybugdb/core";
 
 const PROTOCOL_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18"]);
@@ -201,7 +201,8 @@ export const TOOLS: ToolDef[] = [
       "Run a Cypher query against the project's knowledge-graph projection. " +
       "Node tables = node kinds (identity + scalar props as columns, propsJson, provenance); " +
       "rel tables = edge kinds with evidenceCount. " +
-      "Kind names with dashes become underscores. Returns rows as JSON.",
+      "Kind names with dashes become underscores. Returns rows as JSON. " +
+      "Return node/rel stableId (not database IDs), then use graph_evidence for supporting source locations.",
     inputSchema: {
       type: "object",
       properties: { cypher: { type: "string", description: "The Cypher query to run." } },
@@ -212,6 +213,39 @@ export const TOOLS: ToolDef[] = [
       if (!isString(cypher) || cypher.trim() === "") throw new Error("graph_query requires a cypher string");
       const rows = await queryProjection(cfg.projectionPath, cypher);
       return JSON.stringify(rows, null, 2);
+    },
+  },
+  {
+    name: "graph_evidence",
+    description:
+      "Retrieve live evidence for a node or edge stableId from graph_query, directly from the authoritative store. " +
+      "Returns resolver/version/rule/note, explicit sourcePath/locator, and the exact referenced fact with its " +
+      "sourcePath/locator/authority and retirement revisions. Null locations are not inferred. " +
+      "Status distinguishes live (possibly empty evidence), retired, and not_found entities. Retired evidence is excluded. " +
+      "Use nextAfterId as afterId to page; restart if revision changes between pages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        entityType: { type: "string", enum: ["node", "edge"] },
+        stableId: { type: "string", minLength: 1, description: "The node or relationship stableId returned by graph_query." },
+        limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+        afterId: { type: "integer", minimum: 0, default: 0, description: "Evidence row cursor from nextAfterId; not a graph ID." },
+      },
+      required: ["entityType", "stableId"],
+    },
+    async run(cfg, args) {
+      if (args.entityType !== "node" && args.entityType !== "edge") throw new Error("entityType must be node or edge");
+      if (!isString(args.stableId) || args.stableId.trim() === "") throw new Error("stableId must be a non-empty string");
+      const limit = args.limit === undefined ? 50 : args.limit;
+      const afterId = args.afterId === undefined ? 0 : args.afterId;
+      if (!isNumber(limit)) throw new Error("limit must be a number");
+      if (!isNumber(afterId)) throw new Error("afterId must be a number");
+      const store = openStore(cfg);
+      try {
+        return JSON.stringify(store.graphEvidence(args.entityType, args.stableId, limit, afterId), null, 2);
+      } finally {
+        store.close();
+      }
     },
   },
   {

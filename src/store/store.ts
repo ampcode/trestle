@@ -454,6 +454,56 @@ export class Store {
       .all(entityStable) as StoredEvidence[];
   }
 
+  /** Current evidence only; referenced facts retain their own independent retirement state. */
+  graphEvidence(entityType: "node" | "edge", stableId: string, limit = 50, afterId = 0) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error("limit must be an integer from 1 to 200");
+    if (!Number.isSafeInteger(afterId) || afterId < 0) throw new Error("afterId must be a non-negative safe integer");
+    const table = entityType === "node" ? "nodes" : "edges";
+    this.db.exec("BEGIN");
+    try {
+      const revision = this.currentRevision();
+      // SAFETY: selected columns are TEXT and nullable INTEGER from nodes/edges DDL.
+      const entity = this.db.prepare(
+        `SELECT kind, retired_rev FROM ${table} WHERE stable_id = ?
+         ORDER BY retired_rev IS NULL DESC, id DESC LIMIT 1`,
+      ).get(stableId) as { kind: string; retired_rev: number | null } | undefined;
+      const status = !entity ? "not_found" : entity.retired_rev === null ? "live" : "retired";
+      // SAFETY: SELECT * returns evidence DDL columns, filtered by the explicit entity type.
+      const rows = status === "live" ? this.db.prepare(
+        `SELECT * FROM evidence WHERE entity_type = ? AND entity_stable = ?
+         AND retired_rev IS NULL AND id > ? ORDER BY id LIMIT ?`,
+      ).all(entityType, stableId, afterId, limit + 1) as StoredEvidence[] : [];
+      const truncated = rows.length > limit;
+      const evidence = rows.slice(0, limit).map((row) => {
+        // SAFETY: SELECT * returns the facts DDL columns, including its integer revision fields.
+        const fact = row.fact_id === null ? undefined : this.db.prepare("SELECT * FROM facts WHERE id = ?")
+          .get(row.fact_id) as (StoredFact & { created_rev: number; retired_rev: number | null }) | undefined;
+        const locator: JsonValue = row.locator === null ? null : JSON.parse(row.locator);
+        return {
+          id: row.id,
+          sourcePath: row.source_path,
+          locator,
+          resolver: row.resolver,
+          resolverVersion: row.resolver_version,
+          rule: row.rule,
+          note: row.note,
+          createdRev: row.created_rev,
+          retiredRev: row.retired_rev,
+          factId: row.fact_id,
+          fact: fact ? { ...rowToFact(fact), createdRev: fact.created_rev, retiredRev: fact.retired_rev } : null,
+        };
+      });
+      return {
+        revision, entityType, stableId, status, kind: entity?.kind ?? null,
+        retiredRev: entity?.retired_rev ?? null,
+        limit, afterId, evidence, truncated,
+        nextAfterId: truncated ? evidence[evidence.length - 1].id : null,
+      };
+    } finally {
+      this.db.exec("COMMIT");
+    }
+  }
+
   openClaims(kind?: string): StoredClaim[] {
     // SAFETY: both branches select the claims DDL columns, including nullable candidates/rule/retired_rev.
     return (

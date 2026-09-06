@@ -6,7 +6,7 @@
  *
  * Mapping: one node table per node kind (stableId PK + identity fields +
  * scalar props as columns, rest as propsJson), one rel table per edge kind
- * (multi-pair FROM/TO from the profile, edge props + evidenceCount
+ * (multi-pair FROM/TO from the profile, stableId + edge props + evidenceCount
  * derived from live evidence rows).
  *
  * @ladybugdb/core is loaded lazily so the rest of the CLI never pays for
@@ -208,7 +208,7 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
         .join("");
       await exec(
         handle,
-        `CREATE REL TABLE ${ident(tableName(kind))}(${pairs.join(", ")}, ${cols}evidenceCount INT64)`,
+        `CREATE REL TABLE ${ident(tableName(kind))}(${pairs.join(", ")}, stableId STRING, ${cols}evidenceCount INT64)`,
       );
       result.relTables++;
     }
@@ -244,7 +244,7 @@ export async function buildProjection(store: Store, dbPath: string): Promise<Pro
         await exec(
           handle,
           `MATCH (a:${ident(tableName(fromKind))} {stableId: ${lit(e.fromStable)}}), (b:${ident(tableName(toKind))} {stableId: ${lit(e.toStable)}}) ` +
-            `CREATE (a)-[:${ident(tableName(kind))} {` +
+            `CREATE (a)-[:${ident(tableName(kind))} {stableId: ${lit(e.stableId)}, ` +
             cols.map((c) => `${ident(c.name)}: ${lit(e.props[c.name])}, `).join("") +
             `evidenceCount: ${evidence.length}}]->(b)`,
         );

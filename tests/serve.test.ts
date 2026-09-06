@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "../src/cli/main.ts";
+import { Store } from "../src/store/store.ts";
 import { startServer, type RunningServer } from "../src/server/serve.ts";
 import { isBoolean, isNumber, isProperties, isString, type JsonValue, type Properties } from "../src/profile/value.ts";
 import { buildFixture, FIXTURE } from "./fixture.ts";
@@ -182,7 +183,7 @@ test("initialize negotiates protocol and advertises tools", async () => {
 
   const list = await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" });
   const tools = expectArray(expectObject(expectObject(list.json).result).tools).map((t) => expectObject(t).name);
-  assert.deepEqual(tools.sort(), ["coordination", "doctor", "graph_query", "status", "survey"]);
+  assert.deepEqual(tools.sort(), ["coordination", "doctor", "graph_evidence", "graph_query", "status", "survey"]);
 });
 
 test("coordination MCP validates sessions, persists evidence and attributes the transport", async () => {
@@ -239,6 +240,110 @@ test("survey and status read the store per request", async () => {
   assert.equal(status.isError, false);
   const parsed = expectObject(JSON.parse(status.text));
   assert.equal(parsed.nodes, FIXTURE.nodes);
+});
+
+test("graph_evidence retrieves query IDs, provenance and bounded pages through MCP", async () => {
+  const query = await call("graph_query", { cypher: "MATCH ()-[e:READS]->() RETURN e.stableId AS id" });
+  assert.equal(query.isError, false);
+  const stableId = expectObject(expectArray(JSON.parse(query.text))[0]).id;
+  const first = await call("graph_evidence", { entityType: "edge", stableId, limit: 1 });
+  assert.equal(first.isError, false);
+  const page = expectObject(JSON.parse(first.text));
+  assert.equal(page.status, "live");
+  assert.equal(page.kind, "READS");
+  assert.equal(page.truncated, true);
+  const evidence = expectObject(expectArray(page.evidence)[0]);
+  assert.equal(evidence.resolver, "reads");
+  assert.equal(evidence.rule, "read-join");
+  assert.ok(isString(evidence.resolverVersion));
+  assert.equal(evidence.sourcePath, "a.mod");
+  assert.deepEqual(evidence.locator, { type: "lines", startLine: 4 });
+  assert.equal(expectObject(evidence.fact).id, evidence.factId);
+  assert.equal(expectObject(evidence.fact).sourcePath, evidence.sourcePath);
+  assert.equal(expectObject(evidence.fact).retiredRev, null);
+  const second = expectObject(JSON.parse((await call("graph_evidence", {
+    entityType: "edge", stableId, limit: 1, afterId: page.nextAfterId,
+  })).text));
+  assert.equal(second.revision, page.revision);
+  assert.equal(second.truncated, false);
+  assert.equal(second.nextAfterId, null);
+  assert.equal(expectObject(expectArray(second.evidence)[0]).sourcePath, "resources.txt");
+  const wrongType = expectObject(JSON.parse((await call("graph_evidence", { entityType: "node", stableId })).text));
+  assert.equal(wrongType.status, "not_found");
+  assert.deepEqual(wrongType.evidence, []);
+
+  const nodes = await call("graph_query", { cypher: "MATCH (m:Module) RETURN m.stableId AS id, m.name AS name" });
+  for (const row of expectArray(JSON.parse(nodes.text))) {
+    const node = expectObject(row);
+    const result = await call("graph_evidence", { entityType: "node", stableId: node.id });
+    assert.equal(result.isError, false);
+    const body = expectObject(JSON.parse(result.text));
+    assert.equal(body.status, "live");
+    assert.equal(expectArray(body.evidence).length, node.name === "Z" ? 0 : 1);
+  }
+});
+
+test("graph_evidence validates IDs and pagination at the MCP boundary", async () => {
+  for (const args of [
+    {}, { entityType: "fact", stableId: "x" }, { entityType: "node", stableId: " " },
+    ...[0, -1, 201, 1.5, "1", null].map(limit => ({ entityType: "node", stableId: "x", limit })),
+    ...[-1, 0.5, "1", null, Number.MAX_SAFE_INTEGER + 1].map(afterId => ({ entityType: "node", stableId: "x", afterId })),
+  ]) {
+    assert.equal((await call("graph_evidence", args)).isError, true, JSON.stringify(args));
+  }
+  const result = expectObject(JSON.parse((await call("graph_evidence", { entityType: "edge", stableId: "unknown" })).text));
+  assert.equal(result.status, "not_found");
+  assert.equal(result.limit, 50);
+  assert.equal(result.truncated, false);
+  assert.equal(result.nextAfterId, null);
+  assert.deepEqual(result.evidence, []);
+});
+
+test("evidence preserves absent and explicit locators, fact authority, and independent live states", async () => {
+  const fixture = await buildFixture("evidence");
+  const store = new Store(join(fixture.state, "trestle.db"));
+  try {
+    const edge = store.liveEdges("READS")[0];
+    const original = store.liveEvidenceFor(edge.stableId)[0];
+    const authority = { tool: "parser", version: "2", asOf: "pinned-revision" };
+    store.db.prepare("UPDATE facts SET authority = ?, retired_rev = 99 WHERE id = ?").run(JSON.stringify(authority), original.fact_id);
+    store.db.prepare("UPDATE evidence SET source_path = NULL, locator = NULL, note = 'fact-only' WHERE id = ?").run(original.id);
+    let page = store.graphEvidence("edge", edge.stableId);
+    assert.equal(page.evidence[0].sourcePath, null);
+    assert.equal(page.evidence[0].locator, null);
+    assert.equal(page.evidence[0].note, "fact-only");
+    assert.deepEqual(page.evidence[0].fact?.authority, authority);
+    assert.equal(page.evidence[0].fact?.retiredRev, 99);
+    assert.deepEqual(page.evidence[0].fact?.locator, { type: "lines", startLine: 4 });
+    const explicit = { type: "symbol", name: "ledger", range: [1, 2] };
+    store.db.prepare("UPDATE evidence SET fact_id = NULL, source_path = 'external:manifest', locator = ? WHERE id = ?").run(JSON.stringify(explicit), original.id);
+    page = store.graphEvidence("edge", edge.stableId);
+    assert.equal(page.evidence[0].fact, null);
+    assert.equal(page.evidence[0].factId, null);
+    assert.equal(page.evidence[0].sourcePath, "external:manifest");
+    assert.deepEqual(page.evidence[0].locator, explicit);
+    store.db.prepare("UPDATE evidence SET fact_id = 999999 WHERE id = ?").run(original.id);
+    assert.equal(store.graphEvidence("edge", edge.stableId).evidence[0].fact, null);
+    assert.equal(store.graphEvidence("edge", edge.stableId).evidence[0].factId, 999999);
+    store.db.prepare("UPDATE evidence SET retired_rev = 100 WHERE id = ?").run(original.id);
+    page = store.graphEvidence("edge", edge.stableId, 1);
+    assert.equal(page.evidence.length, 1);
+    assert.notEqual(page.evidence[0].id, original.id);
+    assert.equal(page.truncated, false);
+    assert.deepEqual(store.graphEvidence("edge", edge.stableId, 200, page.evidence[0].id).evidence, []);
+    store.db.prepare("UPDATE edges SET retired_rev = 101 WHERE stable_id = ?").run(edge.stableId);
+    page = store.graphEvidence("edge", edge.stableId);
+    assert.equal(page.status, "retired");
+    assert.equal(page.retiredRev, 101);
+    assert.deepEqual(page.evidence, []);
+    const node = store.liveNodes()[0];
+    store.db.prepare("UPDATE nodes SET retired_rev = 102 WHERE stable_id = ?").run(node.stableId);
+    assert.equal(store.graphEvidence("node", node.stableId).status, "retired");
+    assert.deepEqual(store.graphEvidence("node", node.stableId).evidence, []);
+  } finally {
+    store.close();
+    rmSync(fixture.repo, { recursive: true, force: true });
+  }
 });
 
 test("tool failures are in-band isError results", async () => {

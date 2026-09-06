@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 export const description =
-	'Query Trestle through Amp portals and coordinate migration units. Bind the current Amp thread as lead and bookmark verified message references without controlling session execution.'
+	'Query Trestle graphs and supporting evidence through Amp portals and coordinate migration units. Bind the current Amp thread as lead and bookmark verified message references without controlling session execution.'
 
 /**
  * Auth model: the portal stays private. The agent mints a one-time login URL
@@ -306,6 +306,7 @@ export default function (amp: PluginAPI) {
 		name: 'trestle_query',
 		description:
 			'Run a raw Cypher query against a Trestle knowledge graph served behind an Amp portal. ' +
+			'Return node/rel stableId, then use trestle_call graph_evidence for supporting source locations. ' +
 			'Uses the default portal from the last trestle_auth unless portal_url is given. ' +
 			'If not authenticated, the result explains how to log in.',
 		inputSchema: {
@@ -322,13 +323,16 @@ export default function (amp: PluginAPI) {
 	amp.registerTool({
 		name: 'trestle_call',
 		description:
-			'Call any other tool on a remote Trestle graph server: survey (unresolved work), status (counts), ' +
-			'doctor (graph health checks), or coordination (provider-neutral units, sessions, artifacts, and bookmarks). ' +
-			'Coordination takes a camelCase operation, arguments object, and requestId for mutations. Uses the default portal unless portal_url is given.',
+			'Call a remote Trestle tool: graph_evidence (live evidence and source locations for a node/edge stableId), ' +
+			'survey (unresolved work), status (counts), doctor (health). ' +
+			'Coordination manages provider-neutral units, sessions, artifacts, and bookmarks; takes a camelCase operation, arguments object, and requestId for mutations. ' +
+			'For graph_evidence pass arguments {entityType: "node"|"edge", stableId, limit?: 1..200, afterId?: nextAfterId}. ' +
+			'Results distinguish live/retired/not_found; empty evidence is valid. Referenced facts may be retired. ' +
+			'Page with nextAfterId; restart if revision changes. Uses the default portal unless portal_url is given.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				tool: { type: 'string', description: 'Remote tool name: survey, status, doctor, or coordination' },
+				tool: { type: 'string', description: 'Remote tool name: graph_evidence, survey, status, doctor, or coordination' },
 				arguments: { type: 'object', description: 'Arguments for the remote tool (optional)' },
 				portal_url: { type: 'string', description: 'Portal URL of the trestle serve endpoint (optional)' },
 			},
