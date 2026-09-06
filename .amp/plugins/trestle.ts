@@ -1,4 +1,5 @@
 import type { PluginAPI, ThreadMessage } from '@ampcode/plugin'
+import type { SessionRef, ArtifactInput, Unsupported, HarnessConnector } from '../../src/coordination/types.ts'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -108,8 +109,8 @@ async function callRemote(portalUrl: unknown, tool: string, args: Record<string,
 		return 'No portal known. Pass portal_url, or authenticate once with trestle_auth to set the default.'
 	}
 	const jar = loadJar(portal)
-	if (!jar) return mintInstruction(portal)
-	const res = await rpc(portal, jar, 'tools/call', { name: tool, arguments: args })
+	// Orb networking may already authenticate portal requests without a local cookie.
+	const res = await rpc(portal, jar ?? { cookies: [], expiresAt: null }, 'tools/call', { name: tool, arguments: args })
 	if (!res.ok) return `Session rejected. ${mintInstruction(portal)}`
 	if (res.json.error) throw new Error(`${tool}: ${res.json.error.message}`)
 	const text = res.json.result?.content?.[0]?.text ?? JSON.stringify(res.json.result)
@@ -117,13 +118,62 @@ async function callRemote(portalUrl: unknown, tool: string, args: Record<string,
 	return text
 }
 
-function artifact(message: ThreadMessage, threadURL: string, captureText: boolean) {
+interface AmpThread {
+	id: string
+	title: { get(): Promise<string | null> }
+	state: { get(): Promise<'idle' | 'running' | 'awaiting-approval' | 'error'> }
+	messages(options: { full: boolean; from: 'start'; offset: number; limit: number }): Promise<ThreadMessage[]>
+}
+interface AmpHost { threads: { get(id: `T-${string}`): AmpThread } }
+
+function artifact(message: ThreadMessage, ref: SessionRef, threadURL: string, captureText: boolean): ArtifactInput {
 	return {
-		externalId: JSON.stringify(message.id), kind: 'message',
-		locator: JSON.stringify({ threadURL, messageID: message.id }),
+		session: ref, nativeId: JSON.stringify(message.id), kind: 'message',
+		locator: { threadURL, messageID: message.id },
 		metadata: { role: message.role, tools: message.content.flatMap(block => block.type === 'tool_use' ? [block.name] : []) },
-		...(captureText ? { content: message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n') } : {}),
+		...(captureText ? { text: message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n') } : {}),
 	}
+}
+
+/** Provider adapter consumed by the coordination harness. It only reads Amp state. */
+export function createAmpConnector(amp: AmpHost, options: { captureText?: boolean } = {}): HarnessConnector {
+	const getThread = (ref: SessionRef): AmpThread | Unsupported => {
+		if (ref.provider !== 'amp') return { unsupported: true, reason: `Amp connector cannot read provider ${ref.provider}` }
+		if (!ref.sessionId.startsWith('T-')) return { unsupported: true, reason: 'Invalid Amp session ID' }
+		return amp.threads.get(ref.sessionId as `T-${string}`)
+	}
+	return {
+		provider: 'amp',
+		capabilities: { activity: true, fullHistory: true, artifactContent: true } as const,
+		async readSession(ref: SessionRef) {
+			const thread = getThread(ref)
+			if ('unsupported' in thread) return thread
+			const [title, nativeState] = await Promise.all([thread.title.get(), thread.state.get()])
+			const state = nativeState === 'running' ? 'working' : nativeState === 'awaiting-approval' ? 'awaiting-input' : nativeState === 'idle' ? 'idle' : 'unknown'
+			return {
+				session: { ref, url: `https://ampcode.com/threads/${ref.sessionId}`, ...(title ? { title } : {}) },
+				observation: { session: ref, state, observedAt: new Date().toISOString(), nativeState },
+			}
+		},
+		async readHistory(ref: SessionRef, cursor?: string) {
+			const thread = getThread(ref)
+			if ('unsupported' in thread) return thread
+			const offset = cursor === undefined ? 0 : Number(cursor)
+			if (!Number.isSafeInteger(offset) || offset < 0) return { unsupported: true, reason: 'Invalid Amp history cursor' }
+			const messages = await thread.messages({ full: true, from: 'start', offset, limit: 20 })
+			const url = `https://ampcode.com/threads/${ref.sessionId}`
+			return { artifacts: messages.map(message => artifact(message, ref, url, options.captureText === true)),
+				...(messages.length === 20 ? { nextCursor: String(offset + messages.length) } : {}) }
+		},
+	}
+}
+
+async function coordinate(portalUrl: unknown, operation: string, args: Record<string, unknown>, requestId?: string): Promise<string> {
+	return callRemote(portalUrl, 'coordination', { operation, arguments: args, ...(requestId ? { requestId } : {}) })
+}
+
+function parseRemote(text: string, operation: string): any {
+	try { return JSON.parse(text) } catch { throw new Error(`${operation} returned a non-JSON response: ${text}`) }
 }
 
 export default function (amp: PluginAPI) {
@@ -133,15 +183,16 @@ export default function (amp: PluginAPI) {
 			'Connect the current Amp thread to Trestle migration coordination. ' +
 			'index lists message IDs, roles and tool names (including compacted history), without copying transcripts. ' +
 			'Set persist to store the index page; capture_text additionally retains visible text (never thinking or tool payloads). ' +
-			'create binds this thread as lead; pass title, objective, acceptance, scope and sourceRevision in arguments. ' +
+			'Mutations require request_id, which is reused deterministically across retries. create binds this thread as lead. ' +
 			'bookmark requires message_id and arguments.kind/description; verifies and indexes that message, then pins its artifact version. ' +
-			'handoff makes this thread the replacement lead and requires message_id plus arguments.revision/description. ' +
-			'get/list/status use the registry fields in arguments. No sessions are created, resumed or messaged.',
+			'handoff makes this thread the replacement lead and requires message_id plus arguments.expectedRevision/description. ' +
+			'Also supports register, observe and attach. No sessions are created, resumed or messaged.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				operation: { type: 'string', enum: ['index', 'create', 'bookmark', 'handoff', 'get', 'list', 'status'] },
+				operation: { type: 'string', enum: ['index', 'create', 'bookmark', 'handoff', 'get', 'list', 'status', 'register', 'observe', 'attach'] },
 				id: { type: 'string', description: 'Migration unit ID; not needed for index/list.' },
+				request_id: { type: 'string', description: 'Required stable idempotency key for mutations.' },
 				message_id: { type: ['string', 'number'], description: 'Exact message ID returned by index.' },
 				offset: { type: 'integer', minimum: 0, description: 'Index offset from the start; pages contain up to 20 messages.' },
 				persist: { type: 'boolean', description: 'Persist this index page to Trestle. Default false.' },
@@ -153,11 +204,12 @@ export default function (amp: PluginAPI) {
 		},
 		async execute(input, ctx) {
 			const operation = input.operation
-			if (!['index', 'create', 'bookmark', 'handoff', 'get', 'list', 'status'].includes(String(operation))) {
+			if (!['index', 'create', 'bookmark', 'handoff', 'get', 'list', 'status', 'register', 'observe', 'attach'].includes(String(operation))) {
 				throw new Error('Unknown Amp adapter operation')
 			}
 			const thread = ctx.thread
 			const threadURL = `https://ampcode.com/threads/${thread.id}`
+			const ref = { provider: 'amp', sessionId: thread.id }
 			if (operation === 'index') {
 				const offset = input.offset ?? 0
 				if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid offset')
@@ -165,10 +217,11 @@ export default function (amp: PluginAPI) {
 				let imported: unknown = undefined
 				if (input.capture_text === true && input.persist !== true) throw new Error('capture_text requires persist for index')
 				if (input.persist === true && messages.length) {
-					const response = await callRemote(input.portal_url, 'migration', {
-						operation: 'artifact-import', provider: 'amp', session: thread.id,
-						artifacts: messages.map(message => artifact(message, threadURL, input.capture_text === true)),
-					})
+					if (typeof input.request_id !== 'string' || !input.request_id) throw new Error('request_id is required for mutations')
+					await coordinate(input.portal_url, 'registerSession', { ref, url: threadURL }, `${input.request_id}:register`)
+					const response = await coordinate(input.portal_url, 'indexArtifacts', {
+						artifacts: messages.map(message => artifact(message, ref, threadURL, input.capture_text === true)),
+					}, `${input.request_id}:index`)
 					try { imported = JSON.parse(response) } catch { return response }
 				}
 				return JSON.stringify({ provider: 'amp', session: thread.id, threadURL,
@@ -183,10 +236,18 @@ export default function (amp: PluginAPI) {
 			if (input.arguments !== undefined && (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments))) {
 				throw new Error('arguments must be an object')
 			}
-			const args: Record<string, unknown> = { ...(input.arguments as Record<string, unknown> ?? {}),
-				operation, id: input.id, provider: 'amp', session: thread.id }
-			delete args.locator
-			delete args.artifactId
+			const supplied = input.arguments as Record<string, unknown> ?? {}
+			const requestId = input.request_id
+			const mutations = ['create', 'bookmark', 'handoff', 'status', 'register', 'observe', 'attach']
+			if (mutations.includes(String(operation)) && (typeof requestId !== 'string' || !requestId)) throw new Error('request_id is required for mutations')
+			const register = () => coordinate(input.portal_url, 'registerSession', { ref, url: threadURL }, `${requestId}:register`)
+			if (operation === 'get') return coordinate(input.portal_url, 'getUnit', { id: input.id })
+			if (operation === 'list') return coordinate(input.portal_url, 'listUnits', supplied)
+			if (operation === 'register') return register()
+			if (operation === 'observe') { await register(); return coordinate(input.portal_url, 'observeSession', { session: ref, state: supplied.state, observedAt: supplied.observedAt, nativeState: supplied.nativeState }, `${requestId}:observe`) }
+			if (operation === 'attach') { await register(); return coordinate(input.portal_url, 'attachSession', { unitId: input.id, ref }, `${requestId}:attach`) }
+			if (operation === 'create') { await register(); return coordinate(input.portal_url, 'createUnit', { id: input.id, title: supplied.title, objective: supplied.objective, acceptance: supplied.acceptance, scope: supplied.scope, lead: ref }, `${requestId}:create`) }
+			if (operation === 'status') { await register(); return coordinate(input.portal_url, 'setUnitStatus', { id: input.id, expectedRevision: supplied.expectedRevision, status: supplied.status, reason: supplied.reason }, `${requestId}:status`) }
 			if (operation === 'bookmark' || operation === 'handoff') {
 				if (typeof input.message_id !== 'string' && typeof input.message_id !== 'number') throw new Error('message_id is required')
 				let found: ThreadMessage | undefined
@@ -197,16 +258,22 @@ export default function (amp: PluginAPI) {
 					if (page.length < 20) break
 				}
 				if (!found) throw new Error('Message not found in the current Amp thread')
-				const response = await callRemote(input.portal_url, 'migration', {
-					operation: 'artifact-import', provider: 'amp', session: thread.id,
-					artifacts: [artifact(found, threadURL, input.capture_text === true)],
-				})
+				await register()
+				const response = await coordinate(input.portal_url, 'indexArtifacts', {
+					artifacts: [artifact(found, ref, threadURL, input.capture_text === true)],
+				}, `${requestId}:index`)
 				let imported: unknown
 				try { imported = JSON.parse(response) } catch { return response }
 				if (!Array.isArray(imported) || typeof imported[0]?.id !== 'string') throw new Error('Invalid artifact import response')
-				args.artifactId = imported[0].id
+				const bookmarkText = await coordinate(input.portal_url, 'createBookmark', {
+					unitId: input.id, artifactId: imported[0].id, kind: operation === 'handoff' ? 'handoff' : supplied.kind, description: supplied.description,
+				}, `${requestId}:bookmark`)
+				if (operation === 'bookmark') return bookmarkText
+				const bookmark = parseRemote(bookmarkText, 'createBookmark')
+				return coordinate(input.portal_url, 'handoffLead', { id: input.id, expectedRevision: supplied.expectedRevision,
+					newLead: ref, bookmarkId: bookmark.id }, `${requestId}:handoff`)
 			}
-			return callRemote(input.portal_url, 'migration', args)
+			throw new Error('Unhandled Amp adapter operation')
 		},
 	})
 
@@ -256,13 +323,12 @@ export default function (amp: PluginAPI) {
 		name: 'trestle_call',
 		description:
 			'Call any other tool on a remote Trestle graph server: survey (unresolved work), status (counts), ' +
-			'doctor (graph health checks), migration (provider-neutral coordination and artifacts). ' +
-			'For migration, arguments.operation can be artifact-search (query/provider/session/kind/offset), ' +
-			'artifact-get (artifactId), or bookmark-get (bookmarkId). Uses the default portal unless portal_url is given.',
+			'doctor (graph health checks), or coordination (provider-neutral units, sessions, artifacts, and bookmarks). ' +
+			'Coordination takes a camelCase operation, arguments object, and requestId for mutations. Uses the default portal unless portal_url is given.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				tool: { type: 'string', description: 'Remote tool name: survey, status, doctor, or migration' },
+				tool: { type: 'string', description: 'Remote tool name: survey, status, doctor, or coordination' },
 				arguments: { type: 'object', description: 'Arguments for the remote tool (optional)' },
 				portal_url: { type: 'string', description: 'Portal URL of the trestle serve endpoint (optional)' },
 			},

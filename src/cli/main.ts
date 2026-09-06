@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildLock, isProfile, isProfileLock, profileFromLock, type Profile, type ProfileLock } from "../profile/define.ts";
 import { sha256 } from "../profile/canonical.ts";
 import { Store } from "../store/store.ts";
-import { migration } from "../store/migration.ts";
+import { Coordination, callCoordination } from "../coordination/index.ts";
 import { isPipelineModule } from "../extract/pipeline.ts";
 import { runExtraction } from "../extract/run.ts";
 import { hashDirSources } from "../extract/seed.ts";
@@ -28,8 +28,8 @@ const USAGE = `trestle <command>
   resolve              run resolvers in phase order
   survey               report the resolved/unresolved population
   status               store revision + row counts
-  migration <op> [json] unit registry: create, list, get, status, handoff, bookmark
-                       traces: artifact-import, artifact-search, artifact-get, bookmark-get
+  coordination <op> [json] [requestId]
+                       session/unit/history/artifact API; mutations require a stable requestId
   doctor [--strict]    mechanical graph-health checks (duplication, staleness, drift)
   project build        materialize the Cypher projection (LadybugDB, regenerable)
   project query <q>    run a Cypher query against the projection
@@ -45,13 +45,12 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
   }
   const [command, sub] = argv;
   switch (command) {
-    case "migration": {
-      const args: unknown = JSON.parse(argv[2] ?? "{}");
-      if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("expected JSON object");
+    case "coordination": {
       const cfg = await loadConfig(cwd, overrides);
       const store = new Store(cfg.dbPath);
       try {
-        console.log(JSON.stringify(migration(store, { ...args, operation: sub }), null, 2));
+        const core = new Coordination(store.db, `local:${userInfo().username}`);
+        console.log(JSON.stringify(callCoordination(core, { operation: sub, arguments: JSON.parse(argv[2] ?? "{}"), requestId: argv[3] }), null, 2));
       } finally {
         store.close();
       }

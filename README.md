@@ -197,71 +197,38 @@ contracts, while SQLite reads use schema-specific row types. See the
 
 ## Migration coordination
 
-Migration units live in the same SQLite database as the graph, in separate
-tables untouched by extraction and resolver retirement. Every unit has exactly
-one designated lead session, including when paused or complete. A provider/session
-pair can lead only one unit. The native harness creates and runs sessions;
-Trestle records their identifiers without checking availability or controlling execution.
+The provider-neutral `trestle/coordination` module stores migration units,
+session observations, unit history, immutable artifacts, and version-pinned
+bookmarks in the graph's SQLite database. Coordination tables are independent
+of extraction and resolution. Every unit always has one designated lead;
+a session belongs to at most one unit, as lead or contributor.
 
 ```sh
-npx trestle migration create '{"id":"orders","title":"Extract orders","objective":"Separate order processing","acceptance":"Contract tests pass","scope":["Module:orders"],"sourceRevision":"<source-commit>","provider":"amp","session":"<existing-session-id>"}'
-npx trestle migration list
-npx trestle migration get '{"id":"orders"}'
-npx trestle migration status '{"id":"orders","revision":1,"status":"active"}'
-npx trestle migration bookmark '{"id":"orders","kind":"verification","provider":"amp","session":"<existing-session-id>","locator":"<artifact-or-message-reference>","description":"Contract test output"}'
-npx trestle migration handoff '{"id":"orders","revision":2,"provider":"codex","session":"<replacement-session-id>","locator":"<handoff-evidence-reference>","description":"Continue from the recorded decision"}'
+npx trestle coordination registerSession '{"ref":{"provider":"codex","sessionId":"native-session"}}' register-orders-1
+npx trestle coordination createUnit '{"id":"orders","title":"Extract orders","objective":"Separate order processing","acceptance":"Contract tests pass","scope":{"graphRevision":0,"entityIds":["Module:orders"],"sourceRevision":"<source-commit>"},"lead":{"provider":"codex","sessionId":"native-session"}}' create-orders-1
+npx trestle coordination listUnits '{}'
+npx trestle coordination setUnitStatus '{"id":"orders","expectedRevision":1,"status":"active","reason":"Implementation started"}' activate-orders-1
 ```
 
-The `migration` MCP tool accepts the same JSON fields plus `operation`.
-Creation freezes explicit scope IDs and a source revision reference; these are
-caller-supplied references, not validated source snapshots. Scope and contract
-are immutable in this initial registry. Status is `planned`, `active`, `blocked`,
-or `complete`; completion is reported, not independently verified.
-Status changes and lead handoffs require the current unit revision. Handoffs
-atomically replace the lead and retain the previous binding and an evidence bookmark.
-Bookmarks retain provider/session attribution and locators. They can also pin an
-immutable indexed artifact version. Legacy locator-only bookmarks remain readable.
+The `coordination` MCP tool accepts `{operation, arguments, requestId}`.
+Mutations require durable idempotency keys; status changes and handoffs also
+require the current unit revision. Session activity is timestamped observation,
+not a migration status or a guarantee of availability. The native harness owns
+execution: there is no scheduler, worker queue, or session spawning in Trestle.
 
-The MCP endpoint can now write coordination records. Keep it behind the trusted
-portal boundary; a session identifier is attribution, not authentication or permission.
-There is no scheduler, worker queue, or session spawning.
-
-### Provider-neutral artifact index and bookmarks
-
-Any connector can submit the same artifact envelope through CLI or the `migration`
-MCP tool. No Amp identifiers are required:
-
-```sh
-npx trestle migration artifact-import '{"provider":"codex","session":"native-session","artifacts":[{"externalId":"message-1","kind":"message","locator":"native:message-1","metadata":{"role":"assistant"},"content":"Approved decision excerpt"}]}'
-npx trestle migration artifact-search '{"provider":"codex","query":"decision"}'
-npx trestle migration artifact-get '{"artifactId":"<returned-artifact-id>"}'
-npx trestle migration bookmark '{"id":"orders","artifactId":"<returned-artifact-id>","kind":"decision","description":"Boundary decision"}'
-npx trestle migration bookmark-get '{"bookmarkId":1}'
-```
-
-- Imports accept 1–20 records atomically. Re-importing an identical record returns
-  the same ID; changed content, metadata, kind or locator creates another version.
-  `contentHash` fingerprints that captured payload, not independently verified source.
-- Provider + session + external ID names the native artifact. Artifact IDs also
-  include the payload hash. Bookmarks pin these immutable versions, not “latest.”
-- Omit `content` for metadata-only storage. Search filters by provider, session and
-  kind, with literal case-insensitive substring matching on metadata/captured text.
-  Results omit content and paginate with `offset`/`nextOffset` (20 per page).
-  All retained versions are searchable; `artifact-get` retrieves a specific version.
-- `bookmark-get` returns the bookmark and captured artifact, or `artifact: null`
-  for a legacy locator-only bookmark. Unit `get` lists its bookmarks and artifact IDs.
-- Capture is explicit. Connectors must redact sensitive data before import;
-  Trestle does not automatically redact, authenticate provenance, or verify assertions.
-  Retained text shares the database's access boundary and backup/retention policy.
-  Metadata-only records still require native storage to retrieve original content.
+See [the core API and connector guide](./docs/coordination.md) for all types,
+operations, evidence capture, actor attribution, and automatic legacy upgrades.
+The old `migration` CLI/MCP API has been removed, not retained as a parallel
+session-management implementation.
 
 ### Amp adapter
 
 The project plugin exposes `trestle_amp`, using the portal authenticated by
 `trestle_auth`. It obtains the current thread ID from Amp's invocation context,
-not model-supplied arguments:
+not model-supplied arguments. Mutations require a stable `request_id`:
 
-- `create`: pass `id` and unit fields in `arguments`; this thread becomes lead.
+- `create`: pass `id` and unit fields (including the scope object) in `arguments`;
+  this thread becomes lead.
 - `index`: page through message IDs, roles and tool names using `offset` (20 per
   page), including compacted history. Default is read-only. Set `persist: true`
   to retain that page's metadata; the response includes artifact IDs.
@@ -270,9 +237,11 @@ not model-supplied arguments:
   and imports its metadata before bookmarking the returned artifact version.
   Its native locator contains the thread URL and exact message ID.
 - `handoff`: run from the replacement lead thread with `id`, `message_id`, and
-  `arguments: {revision, description}` pointing to its handoff evidence.
+  `arguments: {expectedRevision, description}` pointing to its handoff evidence.
 - `get`, `list`, `status`: access the shared registry (`id` at the top level;
-  `revision` and `status` in `arguments`).
+  `expectedRevision`, `status`, and `reason` in `arguments` for status).
+- `register`, `attach`, `observe`: register this thread, attach it to `id`, or
+  report `arguments: {state, observedAt, nativeState?}` for this thread.
 
 For indexing (with `persist`), bookmarking or handoff, `capture_text: true` opts
 into retaining visible text. Review it for sensitive content first. Thinking blocks
@@ -280,7 +249,7 @@ and tool inputs/outputs are never captured by this adapter. A bookmark without
 capture pins metadata, not a transcript copy. Import precedes bookmarking, so a
 failed bookmark can leave an indexed artifact; retrying the import is idempotent.
 No automatic trace export runs in the background. Amp retains the original messages
-and controls session execution. Use `trestle_call` with `tool: "migration"` for
+and controls session execution. Use `trestle_call` with `tool: "coordination"` for
 provider-neutral artifact search/retrieval and bookmark retrieval.
 
 ## Upgrading

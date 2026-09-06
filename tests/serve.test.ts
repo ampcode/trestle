@@ -182,31 +182,34 @@ test("initialize negotiates protocol and advertises tools", async () => {
 
   const list = await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" });
   const tools = expectArray(expectObject(expectObject(list.json).result).tools).map((t) => expectObject(t).name);
-  assert.deepEqual(tools.sort(), ["doctor", "graph_query", "migration", "status", "survey"]);
+  assert.deepEqual(tools.sort(), ["coordination", "doctor", "graph_query", "status", "survey"]);
 });
 
-test("migration MCP records a mandatory lead and rejects missing leads", async () => {
-  const input = { operation: "create", id: "mcp-unit", title: "Migration", objective: "Separate module",
-    acceptance: "Tests pass", scope: [], sourceRevision: "pinned-source", provider: "codex" };
-  const rejected = await call("migration", input);
+test("coordination MCP validates sessions, persists evidence and attributes the transport", async () => {
+  const ref = { provider: "codex", sessionId: "native-session" };
+  const invoke = async (operation: string, args: Properties, requestId?: string): Promise<JsonValue> => {
+    const result = await call("coordination", { operation, arguments: args, requestId });
+    assert.equal(result.isError, false, result.text);
+    return JSON.parse(result.text);
+  };
+  const rejected = await call("coordination", { operation: "registerSession", arguments: { ref } });
   assert.equal(rejected.isError, true);
-  assert.match(rejected.text, /session/);
-  const created = await call("migration", { ...input, session: "native-session" });
-  assert.equal(created.isError, false);
-  assert.equal(JSON.parse(created.text).lead_session, "native-session");
-  const found = await call("migration", { operation: "get", id: "mcp-unit" });
-  assert.equal(JSON.parse(found.text).lead_provider, "codex");
-  const imported = await call("migration", { operation: "artifact-import", provider: "codex", session: "native-session",
-    artifacts: [{ externalId: "verification", kind: "test-output", locator: "native:verification", content: "17 tests passed" }] });
-  assert.equal(imported.isError, false);
-  const artifactId = JSON.parse(imported.text)[0].id;
-  const bookmarked = await call("migration", { operation: "bookmark", id: "mcp-unit", artifactId, kind: "verification", description: "Test output" });
-  assert.equal(bookmarked.isError, false);
-  const bookmarkId = JSON.parse(bookmarked.text).bookmarks[0].id;
-  const evidence = await call("migration", { operation: "bookmark-get", bookmarkId });
-  assert.equal(JSON.parse(evidence.text).artifact.content, "17 tests passed");
-  const search = await call("migration", { operation: "artifact-search", provider: "codex", query: "17 tests" });
-  assert.equal(JSON.parse(search.text).artifacts[0].id, artifactId);
+  await invoke("registerSession", { ref }, "mcp-register");
+  const created = expectObject(await invoke("createUnit", { id: "mcp-unit", title: "Migration", objective: "Separate module",
+    acceptance: "Tests pass", scope: { graphRevision: 0, entityIds: [], sourceRevision: "pinned-source" }, lead: ref }, "mcp-create"));
+  assert.deepEqual(created.lead, ref);
+  const imported = expectArray(await invoke("indexArtifacts", { artifacts: [{ session: ref, nativeId: "verification",
+    kind: "test-output", locator: { message: "verification" }, metadata: {}, text: "17 tests passed" }] }, "mcp-index"));
+  const artifactId = expectObject(imported[0]).id;
+  const bookmark = expectObject(await invoke("createBookmark", { unitId: "mcp-unit", artifactId, kind: "verification", description: "Test output" }, "mcp-bookmark"));
+  const evidence = expectObject(await invoke("getBookmark", { id: bookmark.id }));
+  assert.equal(expectObject(evidence.artifact).text, "17 tests passed");
+  const search = expectObject(await invoke("searchArtifacts", { provider: "codex", query: "17 tests" }));
+  assert.equal(expectObject(expectArray(search.items)[0]).id, artifactId);
+  const history = expectObject(await invoke("getUnitHistory", { id: "mcp-unit" }));
+  assert.equal(expectObject(expectArray(history.items)[0]).actor, "portal-service");
+  const forged = await call("coordination", { operation: "registerSession", arguments: { ref, actor: "forged" }, requestId: "forged" });
+  assert.equal(forged.isError, true);
 });
 
 test("notifications get 202 and no body", async () => {

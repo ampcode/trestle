@@ -18,7 +18,7 @@ import { extname, join, resolve, sep } from "node:path";
 import { isProfileLock, profileFromLock } from "../profile/define.ts";
 import { queryProjection } from "../project/ladybug.ts";
 import { Store } from "../store/store.ts";
-import { migration, migrationSchema } from "../store/migration.ts";
+import { Coordination, callCoordination, coordinationSchema } from "../coordination/index.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
 import type { VisualizationConfig } from "../cli/config.ts";
 import { isString, isProperties, type JsonValue, type Properties } from "../profile/value.ts";
@@ -33,6 +33,8 @@ export interface ServeConfig {
   projectionPath: string;
   lockPath: string;
   visualization?: VisualizationConfig;
+  /** Trusted service principal; never taken from tool arguments or unverified headers. */
+  coordinationActor?: string;
 }
 
 export interface VisualizationGraph {
@@ -174,20 +176,20 @@ export function readVisualizationGraph(cfg: ServeConfig): VisualizationGraph {
 
 export const TOOLS: ToolDef[] = [
   {
-    name: "migration",
-    description: "Read or record migration coordination state; never spawns or controls sessions. " +
-      "Create requires id, title, objective, acceptance, scope, sourceRevision, provider and session (mandatory lead). " +
-      "Get requires id; list needs no fields. Status requires id, revision and status. " +
-      "Handoff requires id, revision, replacement provider/session, locator and description; preserves history atomically. " +
-      "Bookmark requires id, kind, description and either artifactId or provider/session/locator. " +
-      "bookmark-get takes bookmarkId and returns its pinned artifact. artifact-import takes provider, session and 1–20 artifacts; " +
-      "omit content for metadata-only retention. artifact-search accepts provider/session/kind/query/offset; artifact-get takes artifactId. " +
-      "Only import approved content; no automatic redaction. Completion and artifact contents are reported, not independently verified.",
-    inputSchema: migrationSchema,
+    name: "coordination",
+    description: "Provider-neutral session visibility, migration units, history and evidence. Never controls execution. " +
+      "Pass operation, arguments, and a stable requestId for mutations. Register sessions with ref:{provider,sessionId} before attaching them or indexing. " +
+      "createUnit requires id,title,objective,acceptance,scope:{graphRevision,entityIds,sourceRevision},lead. " +
+      "setUnitStatus uses id,expectedRevision,status,reason; handoffLead uses id,expectedRevision,newLead,bookmarkId. " +
+      "indexArtifacts takes artifacts with session,nativeId,kind,locator,metadata and optional approved text. " +
+      "createBookmark uses unitId,artifactId,kind,description. Get operations use id (getSession uses ref). " +
+      "listBookmarks uses unitId; list/search/history operations paginate with offset. Observations are timestamped reports, not live guarantees. " +
+      "No automatic redaction or verification of artifact assertions. See docs/coordination.md for all operation arguments.",
+    inputSchema: coordinationSchema,
     async run(cfg, args) {
       const store = new Store(cfg.dbPath);
       try {
-        return JSON.stringify(migration(store, args), null, 2);
+        return JSON.stringify(callCoordination(new Coordination(store.db, cfg.coordinationActor ?? "portal-service"), args), null, 2);
       } finally {
         store.close();
       }

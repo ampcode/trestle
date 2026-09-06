@@ -12,7 +12,8 @@
     "trestle": "./bin/trestle.js"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./coordination": "./src/coordination/index.ts"
   },
   "scripts": {
     "build:viz": "node src/viz/upstream/build.js",
