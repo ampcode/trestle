@@ -1,9 +1,15 @@
 import type { TrestleConfig } from "trestle";
 
 export default {
-  // Corpus roots: read-only source material, one pinned submodule per
-  // estate under corpora/ (`trestle corpus add <git-url>`).
-  corpusRoots: ["corpora"],
+  // Analyze this repository, excluding ignored files and Trestle's own files.
+  corpusRoots: ["."],
+  respectGitignore: true,
+  corpusExclude: ["trestle", ".amp", ".agents", "trestle.config.mts"],
+  state: "trestle/.state",
+  profile: "trestle/profile.ts",
+  profileLock: "trestle/profile.lock.json",
+  pipeline: "trestle/extract/pipeline.ts",
+  resolvers: "trestle/resolvers",
 
   // Browser graph presentation (served at / by `trestle serve`). Data
   // always comes from the live SQLite store; unspecified kinds receive

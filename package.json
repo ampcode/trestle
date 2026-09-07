@@ -1,10 +1,9 @@
 {
   "name": "trestle",
   "version": "0.1.0",
-  "description": "Knowledge graph harness for code migration: fork this repo, pin your estates as submodules under corpora/, extract facts, resolve a typed evidence graph, and serve it to coding agents.",
+  "description": "CLI and TypeScript SDK for building evidence-backed knowledge graphs in your repository.",
   "type": "module",
   "license": "Apache-2.0",
-  "private": true,
   "engines": {
     "node": ">=23.6"
   },
@@ -12,18 +11,38 @@
     "trestle": "./bin/trestle.js"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./coordination": "./src/coordination/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./coordination": {
+      "types": "./dist/coordination/index.d.ts",
+      "default": "./dist/coordination/index.js"
+    }
   },
+  "files": [
+    "bin",
+    "dist",
+    "assets",
+    "src/viz/index.html",
+    "src/viz/assets",
+    "src/viz/LICENSE*",
+    "src/viz/NOTICE*"
+  ],
   "scripts": {
+    "build": "npm run build:engine && npm run build:viz",
+    "build:engine": "tsc -p tsconfig.build.json && node tools/build-plugin.mjs",
+    "prepack": "npm run build",
+    "test:package": "npm run build && node --test tests/package.test.mjs",
     "build:viz": "node src/viz/upstream/build.js",
     "prelint": "node .agents/skills/installing-anti-slop/scripts/install.mjs --force",
     "lint": "oxlint .",
-    "test": "npm run build:viz && node --test 'tests/*.test.ts'",
-    "typecheck": "tsc --noEmit && node src/viz/upstream/build.js --check"
+    "test": "npm run build && node --test 'tests/*.test.ts'",
+    "typecheck": "npm run build:engine && tsc --noEmit && node src/viz/upstream/build.js --check"
   },
   "dependencies": {
-    "@ladybugdb/core": "^0.19.1"
+    "@ladybugdb/core": "^0.19.1",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.81.0",

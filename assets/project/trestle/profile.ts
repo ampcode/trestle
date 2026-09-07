@@ -1,8 +1,8 @@
 import { defineProfile, t } from "trestle";
 
 /**
- * Vocabulary only — inert data. Behavior lives in extract/pipeline.ts
- * and resolvers/. Run `trestle profile build` after editing.
+ * Vocabulary only — inert data. Behavior lives in trestle/extract/pipeline.ts
+ * and trestle/resolvers/. Run `trestle profile build` after editing.
  */
 export default defineProfile({
   nodes: {

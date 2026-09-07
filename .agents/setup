@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Environment bootstrap for this Trestle graph repo.
+# Contributor environment for the Trestle CLI and SDK.
 # Idempotent: safe to re-run on a warm filesystem or stale snapshot.
 set -euo pipefail
 
@@ -22,17 +22,6 @@ if ! node -e 'const [M,m]=process.versions.node.split(".").map(Number);process.e
   exit 1
 fi
 
-# Corpus submodules: shallow, read-only source material under corpora/.
-if [ -f .gitmodules ] && git rev-parse --git-dir >/dev/null 2>&1; then
-  echo ".agents/setup: initializing corpus submodules"
-  git submodule update --init --depth 1
-fi
-
 echo ".agents/setup: installing dependencies"
-npm install
-
-# Archive corpora (non-git estates): refetch from committed manifests.
-if ls corpora/*.source.json >/dev/null 2>&1; then
-  echo ".agents/setup: restoring archive corpora"
-  npx trestle corpus restore
-fi
+npm ci
+npm run build:engine

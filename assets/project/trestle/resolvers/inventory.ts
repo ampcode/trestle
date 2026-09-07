@@ -1,7 +1,7 @@
 import { resolver, mapFacts } from "trestle";
 
 /**
- * Seed resolver: P0 fact mapping. The survey (`trestle survey`) tells you
+ * Starter resolver: P0 fact mapping. The survey (`trestle survey`) tells you
  * which resolver to write next, ranked by unresolved population.
  */
 export default resolver({

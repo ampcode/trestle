@@ -8,7 +8,7 @@ import { pipeline } from "trestle";
 export default pipeline(async ({ corpus, memo, emit }) => {
   for (const path of corpus.list()) {
     await memo(`inventory:${path}`, [path], () => {
-      const text = corpus.read(path);
+      const bytes = corpus.readBytes(path);
       const dot = path.lastIndexOf(".");
       emit({
         kind: "file-inventoried",
@@ -16,7 +16,7 @@ export default pipeline(async ({ corpus, memo, emit }) => {
         props: {
           path,
           extension: dot > 0 ? path.slice(dot + 1) : undefined,
-          bytes: Buffer.byteLength(text),
+          bytes: bytes.length,
         },
       });
     });

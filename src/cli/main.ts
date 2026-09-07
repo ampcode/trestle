@@ -12,11 +12,20 @@ import { runExtraction } from "../extract/run.ts";
 import { hashDirSources } from "../extract/seed.ts";
 import { loadResolvers, runResolvers } from "../resolve/run.ts";
 import { computeSurvey, renderSurvey } from "../survey/survey.ts";
-import { loadConfig, type TrestleConfig } from "./config.ts";
+import { findConfig, loadConfig, type TrestleConfig } from "./config.ts";
+import { initProject } from "./init.ts";
+import { VERSION } from "./package.ts";
+import { installAmp, uninstallAmp } from "./amp.ts";
 
 
 const USAGE = `trestle <command>
 
+  init [directory]     analyze this repository; scaffold graph code + install SDK
+                       --amp installs Amp plugin, skills, setup and service
+                       --no-install writes files without installing dependencies
+  amp install          install/refresh project-local Amp integration
+  amp uninstall        remove unmodified owned integration; preserve graph data
+  --version            print the executing CLI version
   corpus add <url>     add an estate under corpora/: git URL -> shallow
                        submodule (--ref <ref> pins a non-default ref);
                        archive URL (or --archive) -> fetched + extracted,
@@ -45,6 +54,20 @@ export async function runCli(argv: string[], cwd: string, overrides: TrestleConf
   }
   const [command, sub] = argv;
   switch (command) {
+    case "--version":
+      console.log(VERSION);
+      return;
+    case "init":
+      return initProject(cwd, argv.slice(1));
+    case "amp": {
+      if (argv.length !== 2 || !["install", "uninstall"].includes(sub ?? "")) throw new Error("usage: trestle amp install|uninstall");
+      const config = findConfig(cwd);
+      if (!config) throw new Error("no Trestle project found; run trestle init --amp first");
+      if (sub === "uninstall") uninstallAmp(dirname(config));
+      else installAmp(dirname(config));
+      console.log(`Amp integration ${sub === "install" ? "installed" : "removed"}. Reload plugins and skills in Amp, or start a new session.`);
+      return;
+    }
     case "coordination": {
       const cfg = await loadConfig(cwd, overrides);
       const store = new Store(cfg.dbPath);
@@ -293,6 +316,8 @@ async function extract(cwd: string, overrides: TrestleConfig): Promise<void> {
     }
     const result = await runExtraction(store, mod.default, {
       corpusRoots: cfg.corpusRoots,
+      corpusExclude: cfg.corpusExclude,
+      respectGitignore: cfg.respectGitignore,
       stateDir: cfg.stateDir,
       // Editing pipeline code (anything under extract/) or the profile
       // invalidates every cell.

@@ -1,6 +1,6 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { sha256 } from "../profile/canonical.ts";
 import { isString, isNumber } from "../profile/value.ts";
 import type { FactInput, Store } from "../store/store.ts";
@@ -21,6 +21,8 @@ export async function runExtraction(
   pipelineDef: PipelineModule,
   opts: {
     corpusRoots: string[];
+    corpusExclude?: string[];
+    respectGitignore?: boolean;
     stateDir: string;
     /**
      * Joins every cell fingerprint. Callers pass a hash of the pipeline
@@ -32,6 +34,8 @@ export async function runExtraction(
 ): Promise<ExtractResult> {
   store.requireProfile();
   const roots = opts.corpusRoots.map((r) => resolve(r));
+  const excluded = [opts.stateDir, ...(opts.corpusExclude ?? [])].map((path) => resolve(path));
+  const excludedPath = (path: string): boolean => excluded.some((dir) => path === dir || path.startsWith(`${dir}${sep}`));
   const seed = opts.fingerprintSeed ?? "";
   const rev = store.beginRevision("extract", {});
   const result: ExtractResult = {
@@ -118,7 +122,8 @@ export async function runExtraction(
       const out: string[] = [];
       for (const root of roots) {
         if (!existsSync(root)) continue; // e.g. corpora/ before any corpus is added
-        walk(root, root, out);
+        if (opts.respectGitignore) walkGit(root, root, out, excludedPath);
+        else walk(root, root, out, excludedPath);
       }
       out.sort();
       if (filter === undefined) return out;
@@ -251,12 +256,38 @@ export async function runExtraction(
   return result;
 }
 
-function walk(root: string, dir: string, out: string[]): void {
-  for (const entry of readdirSync(dir)) {
-    if (SKIP_DIRS.has(entry)) continue;
-    const abs = join(dir, entry);
-    const st = statSync(abs);
-    if (st.isDirectory()) walk(root, abs, out);
-    else if (st.isFile()) out.push(relative(root, abs));
+function walkGit(root: string, dir: string, out: string[], excluded: (path: string) => boolean): void {
+  if (excluded(dir)) return;
+  const git = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+    cwd: dir, encoding: "utf8", maxBuffer: 128 * 1024 * 1024,
+  });
+  if (git.error) throw git.error;
+  if (git.status !== 0) {
+    if (!git.stderr.includes("not a git repository")) throw new Error(`git ls-files: ${git.stderr}`);
+    walk(root, dir, out, excluded);
+    return;
+  }
+  for (const path of new Set(git.stdout.split("\0").filter(Boolean))) {
+    let abs = dir;
+    const parts = path.split("/").filter(Boolean);
+    // Check every component: a previously tracked directory may now be a symlink.
+    const skip = parts.some((part) => {
+      abs = join(abs, part);
+      return SKIP_DIRS.has(part) || excluded(abs) || lstatSync(abs, { throwIfNoEntry: false })?.isSymbolicLink();
+    });
+    if (skip || !existsSync(abs)) continue;
+    if (lstatSync(abs).isFile()) out.push(relative(root, abs));
+    else if (existsSync(join(abs, ".git"))) walkGit(root, abs, out, excluded);
+  }
+}
+
+function walk(root: string, dir: string, out: string[], excluded: (path: string) => boolean): void {
+  if (excluded(dir)) return;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIRS.has(entry.name)) continue;
+    const abs = join(dir, entry.name);
+    if (excluded(abs)) continue;
+    if (entry.isDirectory()) walk(root, abs, out, excluded);
+    else if (entry.isFile()) out.push(relative(root, abs));
   }
 }

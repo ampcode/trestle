@@ -1,6 +1,5 @@
 /**
- * trestle — the root export that user files import by the package
- * self-reference (`import { resolver } from "trestle"`).
+ * Public authoring SDK (`import { resolver } from "trestle"`).
  *
  * Profile:  defineProfile, t
  * Pipeline: pipeline
@@ -18,14 +17,14 @@ export type { TypeBuilder, PropSchema } from "./profile/schema.ts";
 export type { JsonValue, Properties } from "./profile/value.ts";
 
 export { pipeline } from "./extract/pipeline.ts";
-export type { PipelineCtx, PipelineFn, Corpus } from "./extract/pipeline.ts";
+export type { PipelineCtx, PipelineFn, PipelineModule, Corpus, RunResult } from "./extract/pipeline.ts";
 
 export { resolver } from "./resolve/api.ts";
 export type { ResolverDef, Slice, Emitter, FactIndex } from "./resolve/api.ts";
 export { rules, mapFacts } from "./resolve/kit.ts";
 export type { Rule, RuleSet, MapRule } from "./resolve/kit.ts";
 export type { Directive, NodeRef, EvidenceInput } from "./resolve/directives.ts";
-export type { FactRow, NodeRow, EdgeRow } from "./store/store.ts";
+export type { FactInput, FactRow, NodeRow, EdgeRow } from "./store/store.ts";
 
 export type {
   TrestleConfig,

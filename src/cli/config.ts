@@ -32,6 +32,10 @@ export interface VisualizationConfig {
 export interface TrestleConfig {
   /** Corpus roots, relative to the config file's directory. Default: ["corpora"]. */
   corpusRoots?: string[];
+  /** File/directory paths relative to the config directory to omit from corpus.list(). */
+  corpusExclude?: string[];
+  /** Use Git's tracked and untracked non-ignored file list in Git repositories. Default: false. */
+  respectGitignore?: boolean;
   /** State directory (gitignored). Default: ".state". */
   state?: string;
   profile?: string; // default "./profile.ts"
@@ -45,6 +49,8 @@ export interface TrestleConfig {
 export interface ResolvedConfig {
   dir: string;
   corpusRoots: string[];
+  corpusExclude: string[];
+  respectGitignore: boolean;
   stateDir: string;
   dbPath: string;
   projectionPath: string;
@@ -88,27 +94,33 @@ function isConfig(value: unknown): value is TrestleConfig {
     && (!("resolvers" in value) || value.resolvers === undefined || isString(value.resolvers))
     && (!("corpusRoots" in value) || value.corpusRoots === undefined || (Array.isArray(value.corpusRoots)
       && value.corpusRoots.every(isString)))
+    && (!("corpusExclude" in value) || value.corpusExclude === undefined || (Array.isArray(value.corpusExclude)
+      && value.corpusExclude.every(isString)))
+    && (!("respectGitignore" in value) || value.respectGitignore === undefined || typeof value.respectGitignore === "boolean")
     && (!("visualization" in value) || value.visualization === undefined || isVisualizationConfig(value.visualization));
 }
 
-export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Promise<ResolvedConfig> {
+export function findConfig(cwd: string): string | undefined {
   // The graph repo root is wherever trestle.config.ts lives. Search upward
   // so the CLI works from any subdirectory; stop at a git boundary so an
   // unrelated parent project is never picked up.
-  let dir = resolve(cwd);
-  for (let d = dir; ; ) {
-    if (existsSync(join(d, "trestle.config.ts"))) {
-      dir = d;
-      break;
-    }
+  for (let d = resolve(cwd); ; ) {
+    const configs = ["trestle.config.mts", "trestle.config.ts"].map((name) => join(d, name)).filter(existsSync);
+    if (configs.length > 1) throw new Error(`${d}: keep only one trestle.config.mts or trestle.config.ts`);
+    if (configs.length === 1) return configs[0];
     if (existsSync(join(d, ".git"))) break; // repo root without a config: stay at cwd
     const parent = dirname(d);
     if (parent === d) break;
     d = parent;
   }
-  const configPath = join(dir, "trestle.config.ts");
+  return undefined;
+}
+
+export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Promise<ResolvedConfig> {
+  const configPath = findConfig(cwd);
+  const dir = configPath ? dirname(configPath) : resolve(cwd);
   let fileConfig: TrestleConfig = {};
-  if (existsSync(configPath)) {
+  if (configPath) {
     const mod = await import(pathToFileURL(configPath).href);
     const exported: unknown = mod.default ?? {};
     if (!isConfig(exported)) throw new Error(`${configPath}: invalid Trestle configuration`);
@@ -120,6 +132,8 @@ export async function loadConfig(cwd: string, overrides: TrestleConfig = {}): Pr
   return {
     dir,
     corpusRoots: (cfg.corpusRoots ?? ["corpora"]).map(rel),
+    corpusExclude: (cfg.corpusExclude ?? []).map(rel),
+    respectGitignore: cfg.respectGitignore ?? false,
     stateDir,
     dbPath: join(stateDir, "trestle.db"),
     projectionPath: join(stateDir, "projection.lbug"),

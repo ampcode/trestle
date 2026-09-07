@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store/store.ts";
@@ -19,7 +19,7 @@ import { resolver } from "../src/resolve/api.ts";
 import { runResolvers } from "../src/resolve/run.ts";
 
 const REPO = join(import.meta.dirname, "..");
-const SKILLS_DIR = join(REPO, ".agents", "skills");
+const SKILLS_DIR = join(REPO, "assets", "skills");
 
 test("packaged skills are well-formed", () => {
   const dirs = readdirSync(SKILLS_DIR);
@@ -35,35 +35,18 @@ test("packaged skills are well-formed", () => {
   }
 });
 
-test("the graph repo ships its user surface committed at the root", () => {
-  // The repo IS the application: no init, no scaffold, no install of
-  // trestle itself. These files must exist in every clone.
-  for (const f of ["trestle.config.ts", "profile.ts", "extract/pipeline.ts", "AGENTS.md"]) {
-    assert.ok(existsSync(join(REPO, f)), `missing user-surface file ${f}`);
+test("the distribution ships a standalone project template and public SDK", () => {
+  const template = join(REPO, "assets", "project");
+  for (const f of ["trestle.config.mts", "trestle/profile.ts", "trestle/extract/pipeline.ts", "trestle/resolvers/inventory.ts"]) {
+    assert.ok(existsSync(join(template, f)), `missing template ${f}`);
   }
-  // The resolver surface is a contract (≥1 resolver), not a filename:
-  // graph authors split and name resolvers per estate.
-  const resolverFiles = readdirSync(join(REPO, "resolvers")).filter(
-    (f) => f.endsWith(".ts") && !f.startsWith("_") && !f.endsWith(".test.ts"),
-  );
-  assert.ok(resolverFiles.length >= 1, "resolvers/ must contain at least one resolver");
-  const configText = readFileSync(join(REPO, "trestle.config.ts"), "utf8");
-  assert.match(configText, /corpusRoots: \["corpora"\]/);
-  assert.match(configText, /visualization:/);
-  // Node package self-reference: user files import "trestle" from source.
+  const configText = readFileSync(join(template, "trestle.config.mts"), "utf8");
+  assert.match(configText, /corpusRoots: \["\."\]/);
+  assert.match(configText, /respectGitignore: true/);
   const pkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8"));
-  assert.equal(pkg.name, "trestle");
-  assert.equal(pkg.exports["."], "./src/index.ts");
-  // Environment bootstrap: executable, inits submodules, installs at root.
-  const setup = join(REPO, ".agents", "setup");
-  assert.ok(existsSync(setup), "missing .agents/setup");
-  assert.ok(statSync(setup).mode & 0o100, ".agents/setup not executable");
-  const setupText = readFileSync(setup, "utf8");
-  assert.match(setupText, /git submodule update --init --depth 1/);
-  assert.match(setupText, /^npm install$/m);
-  // Graph endpoint declared as a supervised orb service.
-  assert.match(readFileSync(join(REPO, ".amp", "services.yaml"), "utf8"), /trestle\.js serve --host 0\.0\.0\.0 --port "\$PORT"/);
-  assert.ok(existsSync(join(REPO, ".amp", "plugins", "trestle.ts")), "missing .amp/plugins/trestle.ts");
+  assert.equal(pkg.exports["."].default, "./dist/index.js");
+  assert.equal(pkg.exports["."].types, "./dist/index.d.ts");
+  assert.notEqual(pkg.private, true);
 });
 
 /** ---------- incrementality fixes ---------- */
