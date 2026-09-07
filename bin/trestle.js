@@ -6,8 +6,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // A global installation bootstraps projects; an existing project's pin owns execution.
 let local;
 for (let dir = process.cwd(); ; dir = dirname(dir)) {
-  const candidate = join(dir, 'node_modules/trestle/bin/trestle.js');
-  if (existsSync(candidate)) { local = realpathSync(candidate); break; }
+  const candidate = ['trestle/node_modules/trestle/bin/trestle.js', 'node_modules/trestle/bin/trestle.js']
+    .map(path => join(dir, path)).find(existsSync);
+  if (candidate) { local = realpathSync(candidate); break; }
   if (existsSync(join(dir, '.git')) || dirname(dir) === dir) break;
 }
 if (local && local !== realpathSync(fileURLToPath(import.meta.url))) {

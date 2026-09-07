@@ -13,7 +13,9 @@ export default {
 
   // Browser graph presentation (served at / by `trestle serve`). Data
   // always comes from the live SQLite store; unspecified kinds receive
-  // stable colors and labels derived from their identity.
+  // labels derived from their identity. Load trestle-visualizing to choose
+  // semantic kind filters, readable pool sizes, and explicit stable colors.
+  // This file inventory is a starter, not a semantic architecture view.
   visualization: {
     title: "Knowledge graph",
     nodes: {

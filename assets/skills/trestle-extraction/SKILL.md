@@ -6,6 +6,7 @@ description: Routes extraction work on a Trestle project — surveying a corpus,
 # Extraction
 
 Read root `trestle.config.mts` (or legacy `trestle.config.ts`) first. New projects use `trestle/extract/pipeline.ts`; customized configs may point elsewhere.
+For new projects, use `npx --prefix trestle trestle` for CLI commands and `npm --prefix trestle run typecheck` for graph code. Install parser dependencies under `trestle/`, not in the application.
 
 Extraction is transcription: read an artifact, write down what it says as
 facts, one observation per fact. You make exactly two semantic decisions —

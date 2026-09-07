@@ -6,6 +6,7 @@ description: Writes Trestle resolvers that turn facts into graph entities, alias
 # Writing Trestle resolvers
 
 Read root `trestle.config.mts` (or legacy `trestle.config.ts`) first. New projects use `trestle/resolvers/`; customized configs may point elsewhere.
+For new projects, invoke CLI commands as `npx --prefix trestle trestle`; the SDK and compiler belong to the graph environment, not the application.
 
 A resolver answers **one semantic question** about the estate and writes the
 answer into the graph. Name the resolver after its question: "which node
@@ -17,7 +18,7 @@ the resolver's entire answer; partial output is a bug. Each run replaces
 that resolver's contribution: omitted properties retract its values.
 Other resolvers' disjoint or equal properties survive; conflicting values
 for the same identity reject the batch rather than choosing a last writer.
-See `node_modules/trestle/README.md`, "Resolver contributions", for alias precedence and upgrade behavior.
+See `trestle/node_modules/trestle/README.md` (root `node_modules/` for legacy installations), "Resolver contributions", for alias precedence and upgrade behavior.
 
 The hard boundary: **resolvers never read artifacts.** Missing information
 means a pipeline gap — add a fact kind, don't work around it here.
@@ -122,5 +123,5 @@ export default resolver({
   fact-kind-specific generated type. Use inference for emitted props.
   When narrowing a fact prop to an identity or index key, justify a cast
   with the actual profile schema, as above; if that schema does not
-  guarantee the value, validate it instead. Run `npx tsc -p trestle/tsconfig.json`
+  guarantee the value, validate it instead. Run `npm --prefix trestle run typecheck`
   for the default layout, plus the project's lint command when one exists.

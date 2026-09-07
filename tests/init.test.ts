@@ -15,12 +15,15 @@ import { runExtraction } from "../src/extract/run.ts";
 test("init preserves application module type, dependencies and edited graph files", async () => {
   const dir = mkdtempSync(join(tmpdir(), "trestle-init-"));
   try {
-    writeFileSync(join(dir, "package.json"), JSON.stringify({ type: "commonjs", scripts: { test: "existing" }, devDependencies: { typescript: "5.8.3" } }));
+    const application = JSON.stringify({ type: "commonjs", scripts: { test: "existing" }, devDependencies: { typescript: "5.7.3" }, packageManager: "pnpm@10.0.0" });
+    writeFileSync(join(dir, "package.json"), application);
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "existing lockfile\n");
     initProject(dir, ["--no-install"]);
-    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-    assert.equal(pkg.type, "commonjs");
-    assert.equal(pkg.scripts.test, "existing");
-    assert.equal(pkg.devDependencies.typescript, "5.8.3");
+    assert.equal(readFileSync(join(dir, "package.json"), "utf8"), application);
+    assert.equal(readFileSync(join(dir, "pnpm-lock.yaml"), "utf8"), "existing lockfile\n");
+    const pkg = JSON.parse(readFileSync(join(dir, "trestle/package.json"), "utf8"));
+    assert.equal(pkg.type, "module");
+    assert.equal(pkg.devDependencies.typescript, "^5.8.0");
     assert.ok(pkg.devDependencies.trestle);
     const cfg = await loadConfig(join(dir, "trestle"));
     assert.deepEqual(cfg.corpusRoots, [dir]);
@@ -55,11 +58,12 @@ test("init bootstraps non-Node repositories and preserves legacy configured path
   const dir = mkdtempSync(join(tmpdir(), "trestle-init-empty-"));
   try {
     initProject(dir, ["application", "--no-install"]);
-    const pkg = JSON.parse(readFileSync(join(dir, "application/package.json"), "utf8"));
+    assert.equal(existsSync(join(dir, "application/package.json")), false);
+    const pkg = JSON.parse(readFileSync(join(dir, "application/trestle/package.json"), "utf8"));
     assert.equal(pkg.private, true);
     assert.ok(pkg.devDependencies.trestle);
     writeFileSync(join(dir, "trestle.config.ts"), 'export default { state: "history", corpusRoots: ["estates"] };');
-    initProject(dir, ["--no-install"]);
+    assert.throws(() => initProject(dir, ["--no-install"]), /does not automatically migrate/);
     const config = await loadConfig(dir);
     assert.equal(config.stateDir, join(dir, "history"));
     assert.equal(config.profilePath, join(dir, "profile.ts"));

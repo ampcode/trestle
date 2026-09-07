@@ -9,6 +9,9 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
+    "paths": {
+      "trestle": ["./node_modules/trestle/dist/index.d.ts"]
+    },
     "types": ["node"]
   },
   "include": ["**/*.ts", "../trestle.config.mts"]

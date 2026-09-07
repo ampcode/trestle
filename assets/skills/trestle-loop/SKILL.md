@@ -5,7 +5,7 @@ description: Runs and interprets the Trestle extract → resolve → survey loop
 
 # Running the Trestle loop
 
-Run commands from the project root and read `trestle.config.mts` (or legacy `trestle.config.ts`) first; customized projects may override the default `trestle/` graph paths. Use `npx trestle` when the CLI is installed locally rather than on PATH.
+Run commands from the project root and read `trestle.config.mts` (or legacy `trestle.config.ts`) first; customized projects may override the default `trestle/` graph paths. In new projects, invoke the isolated CLI as `npx --prefix trestle trestle` rather than using application dependencies.
 
 Trestle projects converge by iteration, and the survey decides each step:
 
@@ -24,7 +24,7 @@ Node kinds become node tables, edge kinds become rel tables with an
 `evidenceCount` column; both expose `stableId` for evidence retrieval.
 Read-only queries may run concurrently. Builds exclude other builders and
 publish immutable generations while existing readers keep their snapshot.
-See `node_modules/trestle/README.md`, "Projection consistency and upgrades", for cleanup and recovery.
+See `trestle/node_modules/trestle/README.md` (root `node_modules/` for legacy installations), "Projection consistency and upgrades", for cleanup and recovery.
 
 For supporting source locations, use `graph_evidence` with the query's
 `stableId` and `entityType: "node"` or `"edge"`. Page with `nextAfterId`

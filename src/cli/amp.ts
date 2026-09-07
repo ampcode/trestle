@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { dirname, join } from "node:path";
 import { isMap, parseDocument } from "yaml";
 import { isProperties, isString } from "../profile/value.ts";
-import { PACKAGE_ROOT, VERSION, packageManager } from "./package.ts";
+import { PACKAGE_ROOT, VERSION, hasIsolatedTooling, packageManager } from "./package.ts";
 import { checkedPath } from "./files.ts";
 
 const ASSETS = join(PACKAGE_ROOT, "assets");
@@ -62,11 +62,13 @@ function ownedAssets(): Map<string, string> {
 }
 
 function sections(root: string): Record<string, string> {
-  const manager = packageManager(root);
+  const isolated = hasIsolatedTooling(root);
+  const install = isolated ? "npm --prefix trestle install --workspaces=false" : `${packageManager(root)} install`;
+  const cli = `${isolated ? "trestle/" : ""}node_modules/trestle/bin/trestle.js`;
   const bodies = {
-    "AGENTS.md": "- Trestle graph code lives under `trestle/` by default. Read `trestle.config.mts` (or legacy `trestle.config.ts`) for configured paths.\n- Load the matching `trestle-*` skill before graph vocabulary, extraction, resolver, or survey work.\n- The SDK is the installed `trestle` package; do not import engine internals or edit application sources merely to construct the graph.",
+    "AGENTS.md": "- Trestle graph code lives under `trestle/` by default. Read `trestle.config.mts` (or legacy `trestle.config.ts`) for configured paths.\n- Load the matching `trestle-*` skill before graph vocabulary, extraction, resolver, or survey work.\n- For frontend/display work, load `trestle-visualizing`: configure the bundled explorer around semantic entities and relationships, size the visible node/edge pools, and inspect the rendered result.\n- New projects isolate the SDK and TypeScript under `trestle/`: use `npx --prefix trestle trestle` and `npm --prefix trestle run typecheck`. Leave application dependencies alone.\n- Import the public `trestle` SDK; do not import engine internals or edit application sources merely to construct the graph.",
     ".agents/setup:root": 'TRESTLE_SETUP_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit $?',
-    ".agents/setup": `# Run after application setup has installed its toolchain.\n(\n  cd "$TRESTLE_SETUP_ROOT" &&\n  ${manager} install &&\n  node node_modules/trestle/bin/trestle.js corpus restore\n) || exit $?\nunset TRESTLE_SETUP_ROOT`,
+    ".agents/setup": `# Run after application setup has installed its toolchain.\n(\n  cd "$TRESTLE_SETUP_ROOT" &&\n  ${install} &&\n  node ${cli} corpus restore\n) || exit $?\nunset TRESTLE_SETUP_ROOT`,
   };
   return Object.fromEntries(Object.entries(bodies).map(([key, body]) => {
     // SAFETY: bodies and MARKERS declare the same owned section keys.
@@ -109,11 +111,14 @@ function sharedFiles(root: string, previous: Manifest | undefined, additions?: R
   return files;
 }
 
-const SERVICE = {
-  command: 'node node_modules/trestle/bin/trestle.js serve --host 0.0.0.0 --port "$PORT"',
-  health: "/health",
-  portal: { title: "Knowledge Graph", description: "Explore the live Trestle graph; MCP at /mcp." },
-};
+function service(root: string) {
+  const prefix = hasIsolatedTooling(root) ? "trestle/" : "";
+  return {
+    command: `node ${prefix}node_modules/trestle/bin/trestle.js serve --host 0.0.0.0 --port "$PORT"`,
+    health: "/health",
+    portal: { title: "Knowledge Graph", description: "Explore the live Trestle graph; MCP at /mcp." },
+  };
+}
 
 function mergeService(root: string, previous: Manifest | undefined, remove: boolean): string {
   const doc = parseDocument(read(checkedPath(root, SERVICES)) || "services: {}\n");
@@ -122,7 +127,7 @@ function mergeService(root: string, previous: Manifest | undefined, remove: bool
   const existing = doc.getIn(["services", "trestle"]);
   if (doc.hasIn(["services", "trestle"]) && (!previous || JSON.stringify(existing) !== previous.service)) throw new Error(`${SERVICES}: trestle service conflicts or was modified`);
   if (remove) doc.deleteIn(["services", "trestle"]);
-  else doc.setIn(["services", "trestle"], SERVICE);
+  else doc.setIn(["services", "trestle"], service(root));
   return doc.toString();
 }
 
@@ -139,7 +144,7 @@ export function installAmp(root: string): void {
   const additions = sections(root);
   const shared = sharedFiles(root, previous, additions);
   const services = mergeService(root, previous, false);
-  const manifest: Manifest = { version: 1, packageVersion: VERSION, files: {}, sections: additions, service: JSON.stringify(SERVICE) };
+  const manifest: Manifest = { version: 1, packageVersion: VERSION, files: {}, sections: additions, service: JSON.stringify(service(root)) };
   for (const [rel, content] of [...assets, ...shared, [SERVICES, services]]) {
     const path = checkedPath(root, rel);
     const existed = existsSync(path);

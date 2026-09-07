@@ -9,6 +9,8 @@
   the CLI, SDK, Amp integration, graph loop, and bundled server assets.
 - User code is TypeScript outside `node_modules`; package runtime is compiled JS.
   Keep packaged resources relative to the package, and user paths relative to config.
+- New projects isolate npm dependencies and TypeScript in `trestle/`; bootstrap
+  must not create or change application package manifests, lockfiles, or compilers.
 
 ## Rules
 
@@ -35,6 +37,7 @@ project-path-aware versions live under `assets/skills/`:
 - extract/pipeline.ts, choosing parsers/indexers → extraction
 - resolvers/*.ts → resolvers
 - deciding what to do next → loop
+- configuring the explorer → `assets/skills/trestle-visualizing/SKILL.md`
 - installing/updating anti-slop lint rules → installing-anti-slop
 
 User projects upgrade their package dependency, not by merging this engine repo.

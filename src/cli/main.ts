@@ -20,7 +20,7 @@ import { installAmp, uninstallAmp } from "./amp.ts";
 
 const USAGE = `trestle <command>
 
-  init [directory]     analyze this repository; scaffold graph code + install SDK
+  init [directory]     analyze this repository; isolate graph code + SDK in trestle/
                        --amp installs Amp plugin, skills, setup and service
                        --no-install writes files without installing dependencies
   amp install          install/refresh project-local Amp integration

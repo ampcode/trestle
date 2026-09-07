@@ -20,12 +20,16 @@ test("Amp install refreshes idempotently and uninstall is scoped", () => {
     writeFileSync(join(root, "trestle/profile.ts"), "graph code");
     installAmp(root);
     const first = readFileSync(join(root, "AGENTS.md"), "utf8");
+    assert.match(first, /load `trestle-visualizing`/);
+    const visualizing = join(root, ".agents/skills/trestle-visualizing/SKILL.md");
+    assert.ok(existsSync(visualizing));
     installAmp(root);
     assert.equal(readFileSync(join(root, "AGENTS.md"), "utf8"), first);
     assert.match(readFileSync(join(root, ".amp/services.yaml"), "utf8"), /app:[\s\S]*trestle:/);
     assert.match(readFileSync(join(root, ".agents/setup"), "utf8"), /TRESTLE_SETUP_ROOT=[\s\S]*echo existing[\s\S]*corpus restore/);
     assert.doesNotMatch(readFileSync(join(root, ".amp/plugins/trestle/index.js"), "utf8"), /src\/coordination/);
     uninstallAmp(root);
+    assert.equal(existsSync(visualizing), false);
     assert.equal(readFileSync(join(root, "trestle/profile.ts"), "utf8"), "graph code");
     assert.equal(readFileSync(join(root, "AGENTS.md"), "utf8"), "# Existing guidance\n");
     assert.equal(readFileSync(join(root, ".agents/setup"), "utf8"), "#!/bin/sh\necho existing\n");

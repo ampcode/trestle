@@ -6,6 +6,7 @@ description: Declares a Trestle profile — the node, edge, and fact vocabulary 
 # Authoring Trestle profiles
 
 Read root `trestle.config.mts` (or legacy `trestle.config.ts`) before editing: it may override the paths below.
+For new projects, use `npx --prefix trestle trestle` for CLI commands and `npm --prefix trestle run typecheck` for graph code; leave application dependencies unchanged.
 
 The profile is where you decide what your migration is *about*. Everything
 else — extraction, resolution, the graph — is mechanical once the vocabulary

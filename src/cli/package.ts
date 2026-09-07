@@ -13,6 +13,12 @@ export function projectPackage(dir: string): Properties {
   return value;
 }
 
+export function hasIsolatedTooling(root: string): boolean {
+  const pkg = projectPackage(join(root, "trestle"));
+  return (isProperties(pkg.devDependencies) && isString(pkg.devDependencies.trestle))
+    || (isProperties(pkg.dependencies) && isString(pkg.dependencies.trestle));
+}
+
 export function packageManager(dir: string): string {
   const declared = projectPackage(dir).packageManager;
   const name = isString(declared) ? declared.split("@")[0] : undefined;

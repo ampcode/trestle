@@ -9,7 +9,7 @@ import { test } from 'node:test';
 const repo = join(import.meta.dirname, '..');
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
-test('packed CLI and SDK bootstrap and run outside the engine checkout', { timeout: 180_000 }, async () => {
+for (const applicationType of ['commonjs', 'non-node']) test(`isolated CLI and SDK in a ${applicationType} repository`, { timeout: 180_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'trestle-package-'));
   const project = join(dir, 'application');
   const run = (command, args, cwd = project) => execFileSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -19,19 +19,32 @@ test('packed CLI and SDK bootstrap and run outside the engine checkout', { timeo
     assert.ok(packed.files.some(file => file.path === 'src/viz/index.html'));
     assert.ok(!packed.files.some(file => file.path === 'src/cli/main.ts'));
     mkdirSync(project);
-    // Preserve a real application's CommonJS mode and scripts.
-    writeFileSync(join(project, 'package.json'), JSON.stringify({ private: true, type: 'commonjs', scripts: { test: 'echo existing' } }));
-    run(npm, ['install', '--save-dev', join(dir, packed.filename)]);
+    const environment = join(project, 'trestle');
+    // Even a parent workspace with an older compiler must not own graph tooling.
+    if (applicationType === 'commonjs') {
+      writeFileSync(join(project, 'package.json'), JSON.stringify({ private: true, type: 'commonjs', scripts: { test: 'echo existing' }, workspaces: ['trestle'] }));
+      run(npm, ['install', '--save-dev', '--save-exact', 'typescript@5.7.3']);
+    }
+    const applicationFiles = new Map(['package.json', 'package-lock.json', 'node_modules/typescript/package.json'].map(path =>
+      [path, existsSync(join(project, path)) ? readFileSync(join(project, path), 'utf8') : undefined]));
+    mkdirSync(environment);
+    writeFileSync(join(environment, 'package.json'), '{"private":true,"type":"module"}');
+    run(npm, ['--prefix', environment, 'install', '--workspaces=false', '--save-dev', join(dir, packed.filename)]);
     run('git', ['init', '--quiet']);
-    writeFileSync(join(project, 'hello.js'), 'module.exports = 42;\n');
+    const source = applicationType === 'non-node' ? 'hello.cbl' : 'hello.js';
+    writeFileSync(join(project, source), applicationType === 'non-node' ? '       IDENTIFICATION DIVISION.\n       PROGRAM-ID. HELLO.\n' : 'module.exports = 42;\n');
     mkdirSync(join(project, '.agents'));
     writeFileSync(join(project, '.agents/setup'), '#!/bin/sh\necho application-setup\ncd /\n');
-    const cli = join(project, 'node_modules/trestle/bin/trestle.js');
+    const cli = join(environment, 'node_modules/trestle/bin/trestle.js');
     assert.match(run(process.execPath, [cli, 'init', '--amp']), /Trestle project ready/);
-    assert.equal(JSON.parse(readFileSync(join(project, 'package.json'))).type, 'commonjs');
     assert.match(run(process.execPath, [cli, 'init', '--amp']), /existing graph files preserved/);
-    run(process.execPath, [join(project, 'node_modules/typescript/bin/tsc'), '-p', 'trestle/tsconfig.json']);
-    run(process.execPath, ['--input-type=module', '-e', 'import { defineProfile, pipeline, resolver } from "trestle"; import { Coordination } from "trestle/coordination"; if (![defineProfile, pipeline, resolver, Coordination].every(x => typeof x === "function")) process.exit(1)']);
+    const visualizing = readFileSync(join(project, '.agents/skills/trestle-visualizing/SKILL.md'), 'utf8');
+    const example = visualizing.match(/```ts\n([\s\S]*?)\n```/)?.[1];
+    assert.ok(example, 'installed visualization guidance includes a typed config example');
+    writeFileSync(join(environment, 'presentation-example.ts'), example);
+    run(npm, ['--prefix', environment, 'run', 'typecheck']);
+    rmSync(join(environment, 'presentation-example.ts'));
+    run(process.execPath, ['--input-type=module', '-e', 'import { defineProfile, pipeline, resolver } from "trestle"; import { Coordination } from "trestle/coordination"; if (![defineProfile, pipeline, resolver, Coordination].every(x => typeof x === "function")) process.exit(1)'], environment);
     assert.match(run(process.execPath, [cli, 'profile', 'build']), /profile/);
     assert.match(run(process.execPath, [cli, 'extract']), /0 failed/);
     assert.match(run(process.execPath, [cli, 'extract']), /0 cells computed/);
@@ -39,9 +52,10 @@ test('packed CLI and SDK bootstrap and run outside the engine checkout', { timeo
     run(process.execPath, [cli, 'survey']);
     run(process.execPath, [cli, 'doctor', '--strict']);
     run(process.execPath, [cli, 'project', 'build']);
-    assert.match(run(process.execPath, [cli, 'project', 'query', 'MATCH (f:File) RETURN f.path']), /hello.js/);
+    assert.ok(run(process.execPath, [cli, 'project', 'query', 'MATCH (f:File) RETURN f.path']).includes(source));
     // The global entrypoint must defer to the project's installed package, even in a subdirectory.
     assert.equal(run(process.execPath, [join(repo, 'bin/trestle.js'), '--version'], join(project, 'trestle')), run(process.execPath, [cli, '--version']));
+    assert.equal(run(npm, ['--prefix', environment, 'exec', '--', 'trestle', '--version']), run(process.execPath, [cli, '--version']));
     const plugin = await import(pathToFileURL(join(project, '.amp/plugins/trestle/index.js')).href);
     const tools = [];
     plugin.default({ registerTool: tool => tools.push(tool.name) });
@@ -49,7 +63,12 @@ test('packed CLI and SDK bootstrap and run outside the engine checkout', { timeo
     run('bash', ['-n', '.agents/setup']);
     run('bash', ['.agents/setup']);
     run('bash', ['.agents/setup']);
-    const { startServer } = await import(pathToFileURL(join(project, 'node_modules/trestle/dist/server/serve.js')).href);
+    assert.match(readFileSync(join(project, '.amp/services.yaml'), 'utf8'), /node trestle\/node_modules\/trestle\/bin\/trestle.js serve/);
+    for (const [path, before] of applicationFiles) {
+      assert.equal(existsSync(join(project, path)) ? readFileSync(join(project, path), 'utf8') : undefined, before, `${path} unchanged`);
+    }
+    assert.ok(existsSync(join(environment, 'package-lock.json')));
+    const { startServer } = await import(pathToFileURL(join(environment, 'node_modules/trestle/dist/server/serve.js')).href);
     const server = await startServer({
       dbPath: join(project, 'trestle/.state/trestle.db'),
       projectionPath: join(project, 'trestle/.state/projection.lbug'),
